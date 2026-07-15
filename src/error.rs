@@ -1,3 +1,4 @@
+use std::fmt;
 use std::path::PathBuf;
 
 #[derive(Debug)]
@@ -10,6 +11,40 @@ pub enum NamespaceError {
     HomeLookupFailed { uid: u32, errno: i32 },
 }
 
+impl fmt::Display for NamespaceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnshareFailed { errno } => {
+                write!(f, "failed to unshare user/mount namespaces (errno {errno})")
+            }
+            Self::UserNamespacesDisabled => write!(
+                f,
+                "user namespaces are disabled (check security.allowUserNamespaces or a hardened kernel profile)"
+            ),
+            Self::SetgroupsWriteFailed { errno } => {
+                write!(f, "failed to write /proc/self/setgroups (errno {errno})")
+            }
+            Self::UidMapWriteFailed { errno } => {
+                write!(f, "failed to write uid/gid map (errno {errno})")
+            }
+            Self::MountPropagationFailed { errno } => {
+                write!(f, "failed to make mount tree private (errno {errno})")
+            }
+            Self::HomeLookupFailed { uid, errno: 0 } => {
+                write!(f, "no passwd entry found for uid {uid}")
+            }
+            Self::HomeLookupFailed { uid, errno } => {
+                write!(
+                    f,
+                    "failed to look up home directory for uid {uid} (errno {errno})"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for NamespaceError {}
+
 #[derive(Debug)]
 pub enum OverlayError {
     ScratchDirCreateFailed { errno: i32 },
@@ -20,12 +55,64 @@ pub enum OverlayError {
     MountFailed { target: PathBuf, errno: i32 },
 }
 
+impl fmt::Display for OverlayError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ScratchDirCreateFailed { errno } => {
+                write!(
+                    f,
+                    "failed to create scratch tmpfs directory (errno {errno})"
+                )
+            }
+            Self::ScratchTmpfsMountFailed { errno } => {
+                write!(f, "failed to mount scratch tmpfs (errno {errno})")
+            }
+            Self::ScratchSubdirFailed { path, errno } => {
+                write!(f, "failed to create {} (errno {errno})", path.display())
+            }
+            Self::HomeSnapshotFailed { errno } => {
+                write!(
+                    f,
+                    "failed to create read-only home snapshot (errno {errno})"
+                )
+            }
+            Self::OverlayApiUnsupported { errno } => write!(
+                f,
+                "kernel too old or overlay filesystem module not loaded (errno {errno})"
+            ),
+            Self::MountFailed { target, errno } => {
+                write!(
+                    f,
+                    "failed to mount overlay at {} (errno {errno})",
+                    target.display()
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for OverlayError {}
+
 #[derive(Debug)]
 pub enum ConfigInvalidReason {
     MissingModulesTable,
     InvalidTargetPath { module: String },
     TomlParseFailed { message: String },
 }
+
+impl fmt::Display for ConfigInvalidReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MissingModulesTable => write!(f, "config is missing a [modules] table"),
+            Self::InvalidTargetPath { module } => {
+                write!(f, "module '{module}' has an invalid target path")
+            }
+            Self::TomlParseFailed { message } => write!(f, "failed to parse TOML: {message}"),
+        }
+    }
+}
+
+impl std::error::Error for ConfigInvalidReason {}
 
 #[derive(Debug)]
 pub enum NythError {
@@ -43,4 +130,38 @@ pub enum NythError {
         expected_lower: PathBuf,
     },
     NoTargetCommand,
+}
+
+impl fmt::Display for NythError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Namespace(e) => write!(f, "{e}"),
+            Self::Overlay(e) => write!(f, "{e}"),
+            Self::ConfigInvalid { path, reason } => {
+                write!(f, "invalid config at {}: {reason}", path.display())
+            }
+            Self::ModuleTargetEscapesHome { module, target } => write!(
+                f,
+                "module '{module}' target {} escapes $HOME",
+                target.display()
+            ),
+            Self::NotBuilt { expected_lower } => write!(
+                f,
+                "session not built yet, expected lower dir at {}",
+                expected_lower.display()
+            ),
+            Self::NoTargetCommand => write!(f, "no command given to run inside the session"),
+        }
+    }
+}
+
+impl std::error::Error for NythError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Namespace(e) => Some(e),
+            Self::Overlay(e) => Some(e),
+            Self::ConfigInvalid { reason, .. } => Some(reason),
+            _ => None,
+        }
+    }
 }
