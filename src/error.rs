@@ -4,6 +4,7 @@ use std::path::PathBuf;
 pub enum NamespaceError {
     UnshareFailed { errno: i32 },
     UserNamespacesDisabled,
+    SetgroupsWriteFailed { errno: i32 },
     UidMapWriteFailed { errno: i32 },
     MountPropagationFailed { errno: i32 },
     ScratchTmpfsFailed { errno: i32 },

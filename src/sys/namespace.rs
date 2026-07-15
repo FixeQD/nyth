@@ -1,4 +1,6 @@
 use std::ffi::CStr;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::PathBuf;
 
 use crate::error::NamespaceError;
@@ -56,4 +58,55 @@ fn home_dir_for(uid: u32) -> Result<PathBuf, NamespaceError> {
 
         return Err(NamespaceError::HomeLookupFailed { uid, errno: ret });
     }
+}
+
+/// A user + mount namespace the caller is running inside of
+pub struct IsolatedSession {
+    uid_map_written: bool,
+}
+
+pub fn enter_isolated_session(uid: u32, gid: u32) -> Result<IsolatedSession, NamespaceError> {
+    unsafe {
+        if libc::unshare(libc::CLONE_NEWUSER | libc::CLONE_NEWNS) != 0 {
+            let err = errno();
+            if err == libc::ENOSPC {
+                // Common cause on NixOS: security.allowUserNamespaces = false, or a hardened profile disabling unprivileged user namespaces
+                return Err(NamespaceError::UserNamespacesDisabled);
+            }
+            return Err(NamespaceError::UnshareFailed { errno: err });
+        }
+    }
+
+    write_setgroups_deny()?;
+    write_uid_gid_map(uid, gid)?;
+
+    Ok(IsolatedSession {
+        uid_map_written: true,
+    })
+}
+
+fn write_setgroups_deny() -> Result<(), NamespaceError> {
+    write_proc_self_file("/proc/self/setgroups", b"deny")
+        .map_err(|errno| NamespaceError::SetgroupsWriteFailed { errno })
+}
+
+fn write_uid_gid_map(uid: u32, gid: u32) -> Result<(), NamespaceError> {
+    write_proc_self_file("/proc/self/uid_map", format!("0 {uid} 1").as_bytes())
+        .map_err(|errno| NamespaceError::UidMapWriteFailed { errno })?;
+    write_proc_self_file("/proc/self/gid_map", format!("0 {gid} 1").as_bytes())
+        .map_err(|errno| NamespaceError::UidMapWriteFailed { errno })
+}
+
+/// Opens `path` for writing and writes `contents` in one call
+fn write_proc_self_file(path: &str, contents: &[u8]) -> Result<(), i32> {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .open(path)
+        .map_err(|e| e.raw_os_error().unwrap_or(0))?;
+    file.write_all(contents)
+        .map_err(|e| e.raw_os_error().unwrap_or(0))
+}
+
+fn errno() -> i32 {
+    unsafe { *libc::__errno_location() }
 }
