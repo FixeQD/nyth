@@ -2,6 +2,7 @@ use std::ffi::CStr;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
+use std::ptr;
 
 use crate::error::NamespaceError;
 
@@ -63,6 +64,7 @@ fn home_dir_for(uid: u32) -> Result<PathBuf, NamespaceError> {
 /// A user + mount namespace the caller is running inside of
 pub struct IsolatedSession {
     uid_map_written: bool,
+    propagation_private: bool,
 }
 
 pub fn enter_isolated_session(uid: u32, gid: u32) -> Result<IsolatedSession, NamespaceError> {
@@ -79,10 +81,29 @@ pub fn enter_isolated_session(uid: u32, gid: u32) -> Result<IsolatedSession, Nam
 
     write_setgroups_deny()?;
     write_uid_gid_map(uid, gid)?;
+    make_mount_tree_private()?;
 
     Ok(IsolatedSession {
         uid_map_written: true,
+        propagation_private: true,
     })
+}
+
+/// New mount ns inherits parent propagation (MS_SHARED on systemd), so this have to run unconditionally or mounts leak to the host
+fn make_mount_tree_private() -> Result<(), NamespaceError> {
+    unsafe {
+        if libc::mount(
+            ptr::null(),
+            c"/".as_ptr(),
+            ptr::null(),
+            libc::MS_REC | libc::MS_PRIVATE,
+            ptr::null(),
+        ) != 0
+        {
+            return Err(NamespaceError::MountPropagationFailed { errno: errno() });
+        }
+    }
+    Ok(())
 }
 
 fn write_setgroups_deny() -> Result<(), NamespaceError> {
