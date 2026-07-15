@@ -7,12 +7,14 @@ pub enum NamespaceError {
     SetgroupsWriteFailed { errno: i32 },
     UidMapWriteFailed { errno: i32 },
     MountPropagationFailed { errno: i32 },
-    ScratchTmpfsFailed { errno: i32 },
     HomeLookupFailed { uid: u32, errno: i32 },
 }
 
 #[derive(Debug)]
 pub enum OverlayError {
+    ScratchDirCreateFailed { errno: i32 },
+    ScratchTmpfsMountFailed { errno: i32 },
+    ScratchSubdirFailed { path: PathBuf, errno: i32 },
     HomeSnapshotFailed { errno: i32 },
     MountFailed { target: PathBuf, errno: i32 },
 }

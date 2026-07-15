@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::ptr;
 
 use crate::error::NamespaceError;
+use crate::sys::errno;
 
 /// The real identity of whoever invoked nyth, read straight from the kernel and the passwd database
 #[derive(Debug, Clone)]
@@ -126,8 +127,4 @@ fn write_proc_self_file(path: &str, contents: &[u8]) -> Result<(), i32> {
         .map_err(|e| e.raw_os_error().unwrap_or(0))?;
     file.write_all(contents)
         .map_err(|e| e.raw_os_error().unwrap_or(0))
-}
-
-fn errno() -> i32 {
-    unsafe { *libc::__errno_location() }
 }
