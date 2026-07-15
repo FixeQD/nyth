@@ -1,6 +1,6 @@
 use std::ffi::{CStr, CString};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::error::OverlayError;
 use crate::sys::errno;
@@ -77,6 +77,46 @@ fn make_subdir(root: &PathBuf, name: &str) -> Result<PathBuf, OverlayError> {
     Ok(path)
 }
 
-fn to_cstring(path: &PathBuf) -> CString {
-    CString::new(path.as_os_str().as_bytes()).expect("path has no interior NUL")
+fn to_cstring(path: impl AsRef<Path>) -> CString {
+    CString::new(path.as_ref().as_os_str().as_bytes()).expect("path has no interior NUL")
+}
+
+/// Read-only bind mount of $HOME as it was before the overlay goes on top
+/// Btw without this, mounting the overlay straight onto $HOME would shadow everything outside the configured modules for the whole session
+pub fn mount_home_snapshot(home: &Path, scratch: &ScratchTmpfs) -> Result<(), OverlayError> {
+    bind_mount(home, &scratch.home_snapshot)?;
+    remount_readonly(&scratch.home_snapshot)
+}
+
+fn bind_mount(source: &Path, target: &Path) -> Result<(), OverlayError> {
+    let ret = unsafe {
+        libc::mount(
+            to_cstring(source).as_ptr(),
+            to_cstring(target).as_ptr(),
+            std::ptr::null(),
+            libc::MS_BIND,
+            std::ptr::null(),
+        )
+    };
+    if ret != 0 {
+        return Err(OverlayError::HomeSnapshotFailed { errno: errno() });
+    }
+    Ok(())
+}
+
+/// MS_RDONLY is ignored on the initial MS_BIND call, a read-only bind mount always needs this second MS_REMOUNT pass
+fn remount_readonly(target: &Path) -> Result<(), OverlayError> {
+    let ret = unsafe {
+        libc::mount(
+            std::ptr::null(),
+            to_cstring(target).as_ptr(),
+            std::ptr::null(),
+            libc::MS_BIND | libc::MS_REMOUNT | libc::MS_RDONLY,
+            std::ptr::null(),
+        )
+    };
+    if ret != 0 {
+        return Err(OverlayError::HomeSnapshotFailed { errno: errno() });
+    }
+    Ok(())
 }
