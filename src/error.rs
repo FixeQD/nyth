@@ -16,6 +16,7 @@ pub enum OverlayError {
     ScratchTmpfsMountFailed { errno: i32 },
     ScratchSubdirFailed { path: PathBuf, errno: i32 },
     HomeSnapshotFailed { errno: i32 },
+    OverlayApiUnsupported { errno: i32 },
     MountFailed { target: PathBuf, errno: i32 },
 }
 

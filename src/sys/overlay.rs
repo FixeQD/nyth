@@ -1,6 +1,13 @@
-use std::ffi::{CStr, CString};
+use std::ffi::{CStr, CString, OsString};
+use std::os::fd::OwnedFd;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
+
+use rustix::fs::CWD;
+use rustix::mount::{
+    FsMountFlags, FsOpenFlags, MountAttrFlags, MoveMountFlags, fsconfig_create,
+    fsconfig_set_string, fsmount, fsopen, move_mount,
+};
 
 use crate::error::OverlayError;
 use crate::sys::errno;
@@ -119,4 +126,62 @@ fn remount_readonly(target: &Path) -> Result<(), OverlayError> {
         return Err(OverlayError::HomeSnapshotFailed { errno: errno() });
     }
     Ok(())
+}
+
+/// Mounts overlayfs at `target`: lowerdir = modules over home-snapshot, upperdir/workdir from `scratch`
+pub fn mount_overlay(scratch: &ScratchTmpfs, target: &Path) -> Result<(), OverlayError> {
+    let fs_fd = open_overlay_fs()?;
+
+    set_lowerdir(&fs_fd, &scratch.lower, &scratch.home_snapshot)?;
+    set_dir_option(&fs_fd, "upperdir", &scratch.upper)?;
+    set_dir_option(&fs_fd, "workdir", &scratch.work)?;
+    fsconfig_create(&fs_fd).map_err(|e| mount_failed(target, e))?;
+
+    let mount_fd = fsmount(
+        &fs_fd,
+        FsMountFlags::FSMOUNT_CLOEXEC,
+        MountAttrFlags::empty(),
+    )
+    .map_err(|e| mount_failed(target, e))?;
+
+    move_mount(
+        &mount_fd,
+        "",
+        CWD,
+        target,
+        MoveMountFlags::MOVE_MOUNT_F_EMPTY_PATH,
+    )
+    .map_err(|e| mount_failed(target, e))
+}
+
+/// ENOSYS = no new mount API (kernel < 5.2); EOPNOTSUPP/ENODEV = overlay module not loaded
+fn open_overlay_fs() -> Result<OwnedFd, OverlayError> {
+    fsopen("overlay", FsOpenFlags::FSOPEN_CLOEXEC).map_err(|e| match e {
+        rustix::io::Errno::NOSYS | rustix::io::Errno::OPNOTSUPP | rustix::io::Errno::NODEV => {
+            OverlayError::OverlayApiUnsupported {
+                errno: e.raw_os_error(),
+            }
+        }
+        other => mount_failed(Path::new("overlay"), other),
+    })
+}
+
+fn set_lowerdir(fs_fd: &OwnedFd, lower: &Path, home_snapshot: &Path) -> Result<(), OverlayError> {
+    let mut value = lower.as_os_str().as_bytes().to_vec();
+    value.push(b':');
+    value.extend_from_slice(home_snapshot.as_os_str().as_bytes());
+    let value = OsString::from_vec(value);
+
+    fsconfig_set_string(fs_fd, "lowerdir", value.as_os_str()).map_err(|e| mount_failed(lower, e))
+}
+
+fn set_dir_option(fs_fd: &OwnedFd, key: &str, dir: &Path) -> Result<(), OverlayError> {
+    fsconfig_set_string(fs_fd, key, dir.as_os_str()).map_err(|e| mount_failed(dir, e))
+}
+
+fn mount_failed(target: &Path, e: rustix::io::Errno) -> OverlayError {
+    OverlayError::MountFailed {
+        target: target.to_path_buf(),
+        errno: e.raw_os_error(),
+    }
 }
