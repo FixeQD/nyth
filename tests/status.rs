@@ -1,9 +1,12 @@
-use std::fs;
+mod support;
+
 use std::path::PathBuf;
 
+use nyth::cli::status::{
+    DotfilesRepo, PendingChange, UpperEntry, diff_upper_against_repo, nyth_status,
+};
 use nyth::config::{Module, RelativeHomePath};
-use nyth::cli::status::{DotfilesRepo, PendingChange, UpperEntry, diff_upper_against_repo, nyth_status};
-use nyth::sys::paths::NythPaths;
+use support::Workspace;
 
 fn module(target: &str) -> Module {
     Module {
@@ -84,26 +87,18 @@ fn diff_is_pure_no_modules_no_entries_no_changes() {
 
 #[test]
 fn nyth_status_walks_upper_recursively_and_diffs_against_repo() {
-    let root = std::env::temp_dir().join(format!("nyth-status-test-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
-    let paths = NythPaths {
-        upper: root.join("upper"),
-        work: root.join("work"),
-        lower: root.join("lower"),
-        root: root.clone(),
-    };
+    let ws = Workspace::new("status");
+    let paths = ws.paths();
 
-    fs::create_dir_all(paths.upper.join(".config/hypr")).expect("create nested upper dir");
-    fs::write(paths.upper.join(".gitconfig"), "[user]\nname = test").expect("write module file");
-    fs::write(
-        paths.upper.join(".config/hypr/hyprland.conf"),
+    ws.write(
+        "state/upper/.config/hypr/hyprland.conf",
         "monitor=,preferred,auto,1",
-    )
-    .expect("write nested module file");
-    fs::write(paths.upper.join("random-state.db"), "").expect("write untracked file");
+    );
+    ws.write("state/upper/.gitconfig", "[user]\nname = test");
+    ws.write("state/upper/random-state.db", "");
 
     let repo = DotfilesRepo::new(
-        root.join("dotfiles"),
+        ws.root.join("dotfiles"),
         vec![
             ("git".to_string(), module(".gitconfig")),
             ("hyprland".to_string(), module(".config/hypr")),
@@ -132,6 +127,4 @@ fn nyth_status_walks_upper_recursively_and_diffs_against_repo() {
             },
         ]
     );
-
-    let _ = fs::remove_dir_all(&root);
 }
