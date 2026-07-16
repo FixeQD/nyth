@@ -30,7 +30,8 @@ pub fn build_into(config_path: &Path, lower: &Path) -> Result<(), NythError> {
     Ok(())
 }
 
-fn load_config(config_path: &Path) -> Result<NythConfig, NythError> {
+/// Reads and parses `config_path`, shared by `build` and `session` so there's one place that turns "file on disk" into `NythError`
+pub fn load_config(config_path: &Path) -> Result<NythConfig, NythError> {
     let raw = fs::read_to_string(config_path).map_err(|e| NythError::ConfigInvalid {
         path: config_path.to_path_buf(),
         reason: ConfigInvalidReason::ReadFailed {

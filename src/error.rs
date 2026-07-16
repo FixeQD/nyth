@@ -109,6 +109,7 @@ pub enum NythError {
     ModuleTargetEscapesHome { module: String, target: PathBuf },
     ModuleBuildFailed { module: String, message: String },
     BuildIoFailed { path: PathBuf, message: String },
+    ExecFailed { program: String, message: String },
     NotBuilt { expected_lower: PathBuf },
     NoTargetCommand,
 }
@@ -131,6 +132,9 @@ impl fmt::Display for NythError {
             }
             Self::BuildIoFailed { path, message } => {
                 write!(f, "build failed at {}: {message}", path.display())
+            }
+            Self::ExecFailed { program, message } => {
+                write!(f, "failed to exec '{program}': {message}")
             }
             Self::NotBuilt { expected_lower } => write!(
                 f,

@@ -3,12 +3,14 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use nyth::build::build;
+use nyth::session::run_session;
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
 
     match args.get(1).map(String::as_str) {
         Some("build") => run_build(args.get(2).map(String::as_str)),
+        Some("session") => run_session_cmd(&args[2..]),
         Some(other) => {
             eprintln!("nyth: unknown command '{other}'");
             ExitCode::FAILURE
@@ -18,6 +20,13 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn run_session_cmd(target_command: &[String]) -> ExitCode {
+    let config_path = Path::new("nyth.toml");
+    let error = run_session(config_path, target_command);
+    eprintln!("nyth session failed: {error}");
+    ExitCode::FAILURE
 }
 
 fn run_build(config_arg: Option<&str>) -> ExitCode {
