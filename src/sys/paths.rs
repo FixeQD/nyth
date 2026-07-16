@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use crate::error::NythError;
 use crate::sys::namespace::CallerIdentity;
 
 /// Persistent, identity-scoped paths for nyth's own state. Separate from ScratchTmpfs (per-session):
@@ -22,4 +23,13 @@ impl NythPaths {
             root,
         }
     }
+}
+
+/// Resolves the real caller's identity and identity-scoped paths together.
+/// Shared by build/session/status/commit, one place instead of four copies
+/// of the same two lines.
+pub fn resolve_identity_and_paths() -> Result<(CallerIdentity, NythPaths), NythError> {
+    let identity = CallerIdentity::from_current_process().map_err(NythError::Namespace)?;
+    let paths = NythPaths::for_identity(&identity);
+    Ok((identity, paths))
 }

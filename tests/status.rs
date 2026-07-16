@@ -2,7 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use nyth::config::{Module, RelativeHomePath};
-use nyth::status::{DotfilesRepo, PendingChange, UpperEntry, diff_upper_against_repo, nyth_status};
+use nyth::cli::status::{DotfilesRepo, PendingChange, UpperEntry, diff_upper_against_repo, nyth_status};
 use nyth::sys::paths::NythPaths;
 
 fn module(target: &str) -> Module {

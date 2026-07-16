@@ -2,11 +2,10 @@ use std::fs;
 use std::os::unix::fs::FileTypeExt;
 use std::path::{Path, PathBuf};
 
-use crate::build::load_config;
+use crate::cli::build::{config_dir_of, load_config};
 use crate::config::Module;
 use crate::error::{NythError, StatusError};
-use crate::sys::namespace::CallerIdentity;
-use crate::sys::paths::NythPaths;
+use crate::sys::paths::{NythPaths, resolve_identity_and_paths};
 
 /// A path that changed during a session: it exists in `upper` because overlayfs copied it up on write, or created it fresh
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,11 +57,10 @@ impl DotfilesRepo {
 
 /// Resolves the caller's identity-scoped paths and config fr, then reports pending changes
 pub fn status(config_path: &Path) -> Result<Vec<PendingChange>, NythError> {
-    let identity = CallerIdentity::from_current_process().map_err(NythError::Namespace)?;
-    let paths = NythPaths::for_identity(&identity);
+    let (_, paths) = resolve_identity_and_paths()?;
 
     let config = load_config(config_path)?;
-    let config_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
+    let config_dir = config_dir_of(config_path);
     let repo = DotfilesRepo::new(config_dir.to_path_buf(), config.modules);
 
     nyth_status(&paths, &repo).map_err(NythError::Status)

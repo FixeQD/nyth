@@ -3,14 +3,12 @@ use std::path::Path;
 
 use crate::config::{Module, NythConfig, parse_nyth_toml};
 use crate::error::{ConfigInvalidReason, NythError};
-use crate::sys::namespace::CallerIdentity;
-use crate::sys::paths::NythPaths;
+use crate::sys::paths::{NythPaths, resolve_identity_and_paths};
 
 /// Resolves the caller's identity-scoped paths and regenerates `lower` from `config_path`
 /// Thin wrapper around `build_into`, ts knows about `$HOME`/CallerIdentity
 pub fn build(config_path: &Path) -> Result<NythPaths, NythError> {
-    let identity = CallerIdentity::from_current_process().map_err(NythError::Namespace)?;
-    let paths = NythPaths::for_identity(&identity);
+    let (_, paths) = resolve_identity_and_paths()?;
     build_into(config_path, &paths.lower)?;
     Ok(paths)
 }
@@ -19,7 +17,7 @@ pub fn build(config_path: &Path) -> Result<NythPaths, NythError> {
 /// Doesn't know about `$HOME` or identity at all, ts testable against any throwaway directory, no mounting, no `$HOME` involved
 pub fn build_into(config_path: &Path, lower: &Path) -> Result<(), NythError> {
     let config = load_config(config_path)?;
-    let config_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
+    let config_dir = config_dir_of(config_path);
 
     reset_lower_dir(lower)?;
 
@@ -30,7 +28,8 @@ pub fn build_into(config_path: &Path, lower: &Path) -> Result<(), NythError> {
     Ok(())
 }
 
-/// Reads and parses `config_path`, shared by `build` and `session` so there's one place that turns "file on disk" into `NythError`
+/// Reads and parses `config_path`, shared by `build`/`session`/`status`/`commit`
+/// so there's one place that turns "file on disk" into `NythError`
 pub fn load_config(config_path: &Path) -> Result<NythConfig, NythError> {
     let raw = fs::read_to_string(config_path).map_err(|e| NythError::ConfigInvalid {
         path: config_path.to_path_buf(),
@@ -43,6 +42,13 @@ pub fn load_config(config_path: &Path) -> Result<NythConfig, NythError> {
         path: config_path.to_path_buf(),
         reason,
     })
+}
+
+/// The directory `config_path` lives in: module `source`/`target` paths are
+/// always resolved relative to here, never to the process's cwd. Shared by
+/// `build`/`status`/`commit`, same one-liner three times over otherwise.
+pub fn config_dir_of(config_path: &Path) -> &Path {
+    config_path.parent().unwrap_or_else(|| Path::new("."))
 }
 
 // lower is fully regenerated on every build, not merged with what was there: a module removed from nyth.toml must disappear from lower too.
@@ -73,11 +79,7 @@ fn copy_module(
     if metadata.is_dir() {
         copy_dir_recursive(&source, &destination).map_err(|e| module_build_failed(name, &e))
     } else {
-        if let Some(parent) = destination.parent() {
-            fs::create_dir_all(parent).map_err(|e| module_build_failed(name, &e))?;
-        }
-        fs::copy(&source, &destination)
-            .map(|_| ())
+        crate::fs_util::copy_file_preserving_symlinks(&source, &destination)
             .map_err(|e| module_build_failed(name, &e))
     }
 }
@@ -100,11 +102,8 @@ fn copy_dir_recursive(source: &Path, destination: &Path) -> std::io::Result<()> 
 
         if file_type.is_dir() {
             copy_dir_recursive(&entry.path(), &dest_path)?;
-        } else if file_type.is_symlink() {
-            let link_target = fs::read_link(entry.path())?;
-            std::os::unix::fs::symlink(&link_target, &dest_path)?;
         } else {
-            fs::copy(entry.path(), &dest_path)?;
+            crate::fs_util::copy_file_preserving_symlinks(&entry.path(), &dest_path)?;
         }
     }
 

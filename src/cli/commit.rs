@@ -1,11 +1,9 @@
-use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::build::load_config;
+use crate::cli::build::{config_dir_of, load_config};
 use crate::error::NythError;
-use crate::status::{DotfilesRepo, PendingChange, nyth_status};
-use crate::sys::namespace::CallerIdentity;
-use crate::sys::paths::NythPaths;
+use crate::cli::status::{DotfilesRepo, PendingChange, nyth_status};
+use crate::sys::paths::{NythPaths, resolve_identity_and_paths};
 
 /// Which pending changes `nyth commit` should actually write back to the repo
 #[derive(Debug, Clone)]
@@ -41,14 +39,13 @@ pub fn select_changes_to_apply(
 /// Resolves the caller's identity-scoped paths for real, then commits.
 /// Thin wrapper around `commit_into`, same split as `build`/`session`
 pub fn commit(config_path: &Path) -> Result<CommitReport, NythError> {
-    let identity = CallerIdentity::from_current_process().map_err(NythError::Namespace)?;
-    let paths = NythPaths::for_identity(&identity);
+    let (_, paths) = resolve_identity_and_paths()?;
     commit_into(config_path, &paths)
 }
 
 pub fn commit_into(config_path: &Path, paths: &NythPaths) -> Result<CommitReport, NythError> {
     let config = load_config(config_path)?;
-    let config_dir = config_path.parent().unwrap_or_else(|| Path::new("."));
+    let config_dir = config_dir_of(config_path);
     let repo = DotfilesRepo::new(config_dir.to_path_buf(), config.modules);
 
     let pending = nyth_status(paths, &repo).map_err(NythError::Status)?;
@@ -110,24 +107,11 @@ fn apply_one_change(
     Ok(destination)
 }
 
-// Symlinks are recreated as symlinks, not dereferenced
+// Delegates to the same symlink-preserving copy build.rs uses, just wraps
+// the io::Error into this module's own error variant.
 fn copy_one(source: &Path, destination: &Path) -> Result<(), NythError> {
-    if let Some(parent) = destination.parent() {
-        fs::create_dir_all(parent).map_err(|e| commit_io_failed(destination, &e))?;
-    }
-
-    let metadata = fs::symlink_metadata(source).map_err(|e| commit_io_failed(source, &e))?;
-
-    if metadata.is_symlink() {
-        let link_target = fs::read_link(source).map_err(|e| commit_io_failed(source, &e))?;
-        let _ = fs::remove_file(destination);
-        std::os::unix::fs::symlink(&link_target, destination)
-            .map_err(|e| commit_io_failed(destination, &e))
-    } else {
-        fs::copy(source, destination)
-            .map(|_| ())
-            .map_err(|e| commit_io_failed(destination, &e))
-    }
+    crate::fs_util::copy_file_preserving_symlinks(source, destination)
+        .map_err(|e| commit_io_failed(destination, &e))
 }
 
 fn commit_io_failed(path: &Path, e: &std::io::Error) -> NythError {

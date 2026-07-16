@@ -3,11 +3,11 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 
-use crate::build::load_config;
+use crate::cli::build::load_config;
 use crate::error::NythError;
 use crate::sys::namespace::{CallerIdentity, enter_isolated_session};
 use crate::sys::overlay::{mount_home_snapshot, mount_overlay, provision_scratch_tmpfs};
-use crate::sys::paths::NythPaths;
+use crate::sys::paths::{NythPaths, resolve_identity_and_paths};
 
 /// The overlay session's lifecycle: built -> mounted -> unmounted
 /// A sum type instead of one struct with `Option<PathBuf>` per stage
@@ -34,11 +34,10 @@ pub fn run_session(config_path: &Path, target_command: &[String]) -> NythError {
         return NythError::NoTargetCommand;
     }
 
-    let identity = match CallerIdentity::from_current_process() {
-        Ok(identity) => identity,
-        Err(e) => return NythError::Namespace(e),
+    let (identity, paths) = match resolve_identity_and_paths() {
+        Ok(pair) => pair,
+        Err(e) => return e,
     };
-    let paths = NythPaths::for_identity(&identity);
 
     run_session_with(config_path, target_command, &identity, &paths)
 }

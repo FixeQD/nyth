@@ -1,42 +1,10 @@
+mod support;
+
 use std::fs;
-use std::path::PathBuf;
 
-use nyth::build::build_into;
+use nyth::cli::build::build_into;
 use nyth::error::NythError;
-
-struct Workspace {
-    root: PathBuf,
-}
-
-impl Workspace {
-    fn new(name: &str) -> Self {
-        let root =
-            std::env::temp_dir().join(format!("nyth-build-test-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).expect("create workspace root");
-        Self { root }
-    }
-
-    fn write(&self, relative: &str, contents: &str) {
-        let path = self.root.join(relative);
-        fs::create_dir_all(path.parent().unwrap()).expect("create parent dirs");
-        fs::write(path, contents).expect("write workspace file");
-    }
-
-    fn config_path(&self) -> PathBuf {
-        self.root.join("nyth.toml")
-    }
-
-    fn lower_path(&self) -> PathBuf {
-        self.root.join("lower")
-    }
-}
-
-impl Drop for Workspace {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.root);
-    }
-}
+use support::Workspace;
 
 #[test]
 fn copies_directory_and_single_file_modules() {
