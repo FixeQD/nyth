@@ -82,6 +82,7 @@ impl std::error::Error for OverlayError {}
 
 #[derive(Debug)]
 pub enum ConfigInvalidReason {
+    ReadFailed { message: String },
     InvalidTargetPath { module: String },
     TomlParseFailed { message: String },
 }
@@ -89,6 +90,7 @@ pub enum ConfigInvalidReason {
 impl fmt::Display for ConfigInvalidReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::ReadFailed { message } => write!(f, "failed to read config file: {message}"),
             Self::InvalidTargetPath { module } => {
                 write!(f, "module '{module}' has an invalid target path")
             }
@@ -105,6 +107,8 @@ pub enum NythError {
     Overlay(OverlayError),
     ConfigInvalid { path: PathBuf, reason: ConfigInvalidReason },
     ModuleTargetEscapesHome { module: String, target: PathBuf },
+    ModuleBuildFailed { module: String, message: String },
+    BuildIoFailed { path: PathBuf, message: String },
     NotBuilt { expected_lower: PathBuf },
     NoTargetCommand,
 }
@@ -122,6 +126,12 @@ impl fmt::Display for NythError {
                 "module '{module}' target {} escapes $HOME",
                 target.display()
             ),
+            Self::ModuleBuildFailed { module, message } => {
+                write!(f, "failed to build module '{module}': {message}")
+            }
+            Self::BuildIoFailed { path, message } => {
+                write!(f, "build failed at {}: {message}", path.display())
+            }
             Self::NotBuilt { expected_lower } => write!(
                 f,
                 "session not built yet, expected lower dir at {}",
