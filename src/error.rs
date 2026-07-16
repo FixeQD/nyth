@@ -105,11 +105,13 @@ impl std::error::Error for ConfigInvalidReason {}
 pub enum NythError {
     Namespace(NamespaceError),
     Overlay(OverlayError),
+    Status(StatusError),
     ConfigInvalid { path: PathBuf, reason: ConfigInvalidReason },
     ModuleTargetEscapesHome { module: String, target: PathBuf },
     ModuleBuildFailed { module: String, message: String },
     BuildIoFailed { path: PathBuf, message: String },
     SessionIoFailed { path: PathBuf, message: String },
+    CommitIoFailed { path: PathBuf, message: String },
     ExecFailed { program: String, message: String },
     NotBuilt { expected_lower: PathBuf },
     NoTargetCommand,
@@ -120,6 +122,7 @@ impl fmt::Display for NythError {
         match self {
             Self::Namespace(e) => write!(f, "{e}"),
             Self::Overlay(e) => write!(f, "{e}"),
+            Self::Status(e) => write!(f, "{e}"),
             Self::ConfigInvalid { path, reason } => {
                 write!(f, "invalid config at {}: {reason}", path.display())
             }
@@ -136,6 +139,9 @@ impl fmt::Display for NythError {
             }
             Self::SessionIoFailed { path, message } => {
                 write!(f, "session setup failed at {}: {message}", path.display())
+            }
+            Self::CommitIoFailed { path, message } => {
+                write!(f, "commit failed at {}: {message}", path.display())
             }
             Self::ExecFailed { program, message } => {
                 write!(f, "failed to exec '{program}': {message}")
@@ -155,6 +161,7 @@ impl std::error::Error for NythError {
         match self {
             Self::Namespace(e) => Some(e),
             Self::Overlay(e) => Some(e),
+            Self::Status(e) => Some(e),
             Self::ConfigInvalid { reason, .. } => Some(reason),
             _ => None,
         }
