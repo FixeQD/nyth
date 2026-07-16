@@ -34,10 +34,7 @@ impl fmt::Display for NamespaceError {
                 write!(f, "no passwd entry found for uid {uid}")
             }
             Self::HomeLookupFailed { uid, errno } => {
-                write!(
-                    f,
-                    "failed to look up home directory for uid {uid} (errno {errno})"
-                )
+                write!(f, "failed to look up home directory for uid {uid} (errno {errno})")
             }
         }
     }
@@ -59,10 +56,7 @@ impl fmt::Display for OverlayError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ScratchDirCreateFailed { errno } => {
-                write!(
-                    f,
-                    "failed to create scratch tmpfs directory (errno {errno})"
-                )
+                write!(f, "failed to create scratch tmpfs directory (errno {errno})")
             }
             Self::ScratchTmpfsMountFailed { errno } => {
                 write!(f, "failed to mount scratch tmpfs (errno {errno})")
@@ -71,21 +65,14 @@ impl fmt::Display for OverlayError {
                 write!(f, "failed to create {} (errno {errno})", path.display())
             }
             Self::HomeSnapshotFailed { errno } => {
-                write!(
-                    f,
-                    "failed to create read-only home snapshot (errno {errno})"
-                )
+                write!(f, "failed to create read-only home snapshot (errno {errno})")
             }
             Self::OverlayApiUnsupported { errno } => write!(
                 f,
                 "kernel too old or overlay filesystem module not loaded (errno {errno})"
             ),
             Self::MountFailed { target, errno } => {
-                write!(
-                    f,
-                    "failed to mount overlay at {} (errno {errno})",
-                    target.display()
-                )
+                write!(f, "failed to mount overlay at {} (errno {errno})", target.display())
             }
         }
     }
@@ -95,7 +82,6 @@ impl std::error::Error for OverlayError {}
 
 #[derive(Debug)]
 pub enum ConfigInvalidReason {
-    MissingModulesTable,
     InvalidTargetPath { module: String },
     TomlParseFailed { message: String },
 }
@@ -103,7 +89,6 @@ pub enum ConfigInvalidReason {
 impl fmt::Display for ConfigInvalidReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MissingModulesTable => write!(f, "config is missing a [modules] table"),
             Self::InvalidTargetPath { module } => {
                 write!(f, "module '{module}' has an invalid target path")
             }
@@ -118,17 +103,9 @@ impl std::error::Error for ConfigInvalidReason {}
 pub enum NythError {
     Namespace(NamespaceError),
     Overlay(OverlayError),
-    ConfigInvalid {
-        path: PathBuf,
-        reason: ConfigInvalidReason,
-    },
-    ModuleTargetEscapesHome {
-        module: String,
-        target: PathBuf,
-    },
-    NotBuilt {
-        expected_lower: PathBuf,
-    },
+    ConfigInvalid { path: PathBuf, reason: ConfigInvalidReason },
+    ModuleTargetEscapesHome { module: String, target: PathBuf },
+    NotBuilt { expected_lower: PathBuf },
     NoTargetCommand,
 }
 
