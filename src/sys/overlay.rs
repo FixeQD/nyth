@@ -99,7 +99,7 @@ fn bind_mount(source: &Path, target: &Path) -> Result<(), OverlayError> {
             to_cstring(source).as_ptr(),
             to_cstring(target).as_ptr(),
             std::ptr::null(),
-            libc::MS_BIND,
+            libc::MS_BIND | libc::MS_NOSUID | libc::MS_NODEV,
             std::ptr::null(),
         )
     };
@@ -109,14 +109,15 @@ fn bind_mount(source: &Path, target: &Path) -> Result<(), OverlayError> {
     Ok(())
 }
 
-/// MS_RDONLY is ignored on the initial MS_BIND call, a read-only bind mount always needs this second MS_REMOUNT pass
+// Two-step bind+remount (MS_RDONLY ignored on initial MS_BIND).
+// Flags repeated on both calls: if source's host mount already has them locked (e.g. /tmp nosuid,nodev), omitting them here gets EPERM (mount_namespaces(7))
 fn remount_readonly(target: &Path) -> Result<(), OverlayError> {
     let ret = unsafe {
         libc::mount(
             std::ptr::null(),
             to_cstring(target).as_ptr(),
             std::ptr::null(),
-            libc::MS_BIND | libc::MS_REMOUNT | libc::MS_RDONLY,
+            libc::MS_BIND | libc::MS_REMOUNT | libc::MS_RDONLY | libc::MS_NOSUID | libc::MS_NODEV,
             std::ptr::null(),
         )
     };
