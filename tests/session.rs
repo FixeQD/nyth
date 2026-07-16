@@ -66,6 +66,8 @@ fn run_in_child(real_identity: &CallerIdentity) -> i32 {
     let paths = NythPaths {
         root: workspace.join("state"),
         lower: workspace.join("state/lower"),
+        upper: workspace.join("state/upper"),
+        work: workspace.join("state/work"),
     };
 
     if let Err(e) = build_into(&config_path, &paths.lower) {

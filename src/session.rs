@@ -74,11 +74,32 @@ pub fn run_session_with(
         return NythError::Overlay(e);
     }
 
-    if let Err(e) = mount_overlay(&paths.lower, &scratch, &identity.home) {
+    if let Err(e) = ensure_dir(&paths.upper) {
+        return e;
+    }
+    if let Err(e) = ensure_dir(&paths.work) {
+        return e;
+    }
+
+    if let Err(e) = mount_overlay(
+        &paths.lower,
+        &paths.upper,
+        &paths.work,
+        &scratch,
+        &identity.home,
+    ) {
         return NythError::Overlay(e);
     }
 
     exec_target(target_command, &config.env)
+}
+
+// upper/work are persistent, not part of the ephemeral scratch tmpfs, so unlike scratch's own subdirs they might not exist yet the very first time a session runs for this identity
+fn ensure_dir(path: &Path) -> Result<(), NythError> {
+    std::fs::create_dir_all(path).map_err(|e| NythError::SessionIoFailed {
+        path: path.to_path_buf(),
+        message: e.to_string(),
+    })
 }
 
 // Only returns on failure: on success execvp() replaces this process image and this function stops existing

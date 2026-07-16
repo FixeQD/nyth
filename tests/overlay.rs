@@ -45,9 +45,13 @@ fn run_in_child(identity: &CallerIdentity) -> i32 {
     // Not the real NythPaths::lower (that's identity.home-scoped and persistent), just a throwaway dir for this test
     let target = scratch.root.join("target");
     let lower = scratch.root.join("test-lower");
-    if fs::create_dir(&target).is_err() || fs::create_dir(&lower).is_err() {
-        eprintln!("create target/lower dir failed");
-        return 3;
+    let upper = scratch.root.join("test-upper");
+    let work = scratch.root.join("test-work");
+    for dir in [&target, &lower, &upper, &work] {
+        if fs::create_dir(dir).is_err() {
+            eprintln!("create test dir failed: {}", dir.display());
+            return 3;
+        }
     }
 
     if let Err(e) = fs::write(lower.join("testfile"), b"from-lower") {
@@ -55,7 +59,7 @@ fn run_in_child(identity: &CallerIdentity) -> i32 {
         return 4;
     }
 
-    if let Err(e) = mount_overlay(&lower, &scratch, &target) {
+    if let Err(e) = mount_overlay(&lower, &upper, &work, &scratch, &target) {
         eprintln!("mount_overlay failed: {e:?}");
         return 5;
     }
@@ -77,7 +81,7 @@ fn run_in_child(identity: &CallerIdentity) -> i32 {
         return 8;
     }
 
-    match fs::read(scratch.upper.join("newfile")) {
+    match fs::read(upper.join("newfile")) {
         Ok(bytes) if bytes == b"from-session" => 0,
         Ok(_) => {
             eprintln!("upperdir file had unexpected content");
