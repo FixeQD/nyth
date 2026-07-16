@@ -14,11 +14,10 @@ use crate::sys::errno;
 use crate::sys::namespace::CallerIdentity;
 
 /// Layout:
-/// /tmp/.nyth-<uid>-<suffix>/{lower,home-snapshot,upper,work}
+/// /tmp/.nyth-<uid>-<suffix>/{home-snapshot,upper,work}
 /// Lives entirely inside the mount namespace from enter_isolated_session, gone once that namespace goes away
 pub struct ScratchTmpfs {
     pub root: PathBuf,
-    pub lower: PathBuf,
     pub home_snapshot: PathBuf,
     pub upper: PathBuf,
     pub work: PathBuf,
@@ -29,7 +28,6 @@ pub fn provision_scratch_tmpfs(identity: &CallerIdentity) -> Result<ScratchTmpfs
     mount_tmpfs(&root)?;
 
     Ok(ScratchTmpfs {
-        lower: make_subdir(&root, "lower")?,
         home_snapshot: make_subdir(&root, "home-snapshot")?,
         upper: make_subdir(&root, "upper")?,
         work: make_subdir(&root, "work")?,
@@ -128,11 +126,15 @@ fn remount_readonly(target: &Path) -> Result<(), OverlayError> {
     Ok(())
 }
 
-/// Mounts overlayfs at `target`: lowerdir = modules over home-snapshot, upperdir/workdir from `scratch`
-pub fn mount_overlay(scratch: &ScratchTmpfs, target: &Path) -> Result<(), OverlayError> {
+/// Mounts overlayfs at `target`: lowerdir = `lower` over `scratch.home_snapshot`, upperdir/workdir from `scratch`
+pub fn mount_overlay(
+    lower: &Path,
+    scratch: &ScratchTmpfs,
+    target: &Path,
+) -> Result<(), OverlayError> {
     let fs_fd = open_overlay_fs()?;
 
-    set_lowerdir(&fs_fd, &scratch.lower, &scratch.home_snapshot)?;
+    set_lowerdir(&fs_fd, lower, &scratch.home_snapshot)?;
     set_dir_option(&fs_fd, "upperdir", &scratch.upper)?;
     set_dir_option(&fs_fd, "workdir", &scratch.work)?;
     fsconfig_create(&fs_fd).map_err(|e| mount_failed(target, e))?;

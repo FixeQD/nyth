@@ -1,12 +1,14 @@
+use std::fs;
+use std::process::exit;
+
 use nyth::error::NamespaceError;
 use nyth::sys::namespace::{CallerIdentity, enter_isolated_session};
 use nyth::sys::overlay::{mount_overlay, provision_scratch_tmpfs};
-use std::fs;
-use std::process::exit;
 
 #[test]
 fn mount_overlay_merges_lower_and_allows_writes() {
     let identity = CallerIdentity::from_current_process().expect("syscalls don't fail");
+
     match unsafe { libc::fork() } {
         -1 => panic!("fork failed"),
         0 => exit(run_in_child(&identity)),
@@ -31,6 +33,7 @@ fn run_in_child(identity: &CallerIdentity) -> i32 {
             return 1;
         }
     }
+
     let scratch = match provision_scratch_tmpfs(identity) {
         Ok(s) => s,
         Err(e) => {
@@ -38,19 +41,25 @@ fn run_in_child(identity: &CallerIdentity) -> i32 {
             return 2;
         }
     };
+
+    // Not the real NythPaths::lower (that's identity.home-scoped and persistent), just a throwaway dir for this test
     let target = scratch.root.join("target");
-    if let Err(e) = fs::create_dir(&target) {
-        eprintln!("create target dir failed: {e}");
+    let lower = scratch.root.join("test-lower");
+    if fs::create_dir(&target).is_err() || fs::create_dir(&lower).is_err() {
+        eprintln!("create target/lower dir failed");
         return 3;
     }
-    if let Err(e) = fs::write(scratch.lower.join("testfile"), b"from-lower") {
+
+    if let Err(e) = fs::write(lower.join("testfile"), b"from-lower") {
         eprintln!("seed lowerdir failed: {e}");
         return 4;
     }
-    if let Err(e) = mount_overlay(&scratch, &target) {
+
+    if let Err(e) = mount_overlay(&lower, &scratch, &target) {
         eprintln!("mount_overlay failed: {e:?}");
         return 5;
     }
+
     let seen = match fs::read(target.join("testfile")) {
         Ok(bytes) => bytes,
         Err(e) => {
@@ -62,10 +71,12 @@ fn run_in_child(identity: &CallerIdentity) -> i32 {
         eprintln!("lowerdir content did not surface through overlay");
         return 7;
     }
+
     if let Err(e) = fs::write(target.join("newfile"), b"from-session") {
         eprintln!("write through overlay failed: {e}");
         return 8;
     }
+
     match fs::read(scratch.upper.join("newfile")) {
         Ok(bytes) if bytes == b"from-session" => 0,
         Ok(_) => {
