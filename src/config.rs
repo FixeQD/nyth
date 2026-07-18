@@ -48,15 +48,3 @@ impl RelativeHomePath {
         &self.0
     }
 }
-
-/// A shell command string, run after a module's files change
-/// ts not parsed or split into argv here
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReloadCommand(pub String);
-
-#[derive(Debug, Clone)]
-pub struct Module {
-    pub source: PathBuf,
-    pub target: RelativeHomePath,
-    pub on_change: Option<ReloadCommand>,
-}

@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::cli::status::{DotfilesRepo, PendingChange, nyth_status};
+use crate::config::RelativeHomePath;
 use crate::error::NythError;
 use crate::sys::paths::{NythPaths, resolve_identity_and_paths};
 
@@ -8,7 +9,7 @@ use crate::sys::paths::{NythPaths, resolve_identity_and_paths};
 #[derive(Debug, Clone)]
 pub enum CommitSelection {
     All,
-    Modules(Vec<String>),
+    WatchedPaths(Vec<RelativeHomePath>),
 }
 
 #[derive(Debug, Clone)]
@@ -25,9 +26,12 @@ pub fn select_changes_to_apply(
     pending
         .iter()
         .filter(|change| match change {
-            PendingChange::ModuleModified { module, .. } => match selection {
+            PendingChange::WatchedPathModified { relative_path } => match selection {
                 CommitSelection::All => true,
-                CommitSelection::Modules(names) => names.iter().any(|name| name == module),
+                CommitSelection::WatchedPaths(paths) => paths.iter().any(|watched| {
+                    let target = watched.as_path();
+                    relative_path == target || relative_path.starts_with(target)
+                }),
             },
             PendingChange::Untracked { .. } => false,
         })
@@ -49,7 +53,7 @@ pub fn commit_into(repo: &DotfilesRepo, paths: &NythPaths) -> Result<CommitRepor
     apply_commit(&selected, paths, repo)
 }
 
-/// Writes each already-selected change back to its module's source in the local repo
+/// Writes each already-selected change back to the repo, at the same $HOME-relative path it changed at: the repo mirrors $HOME under `repo.root`
 pub fn apply_commit(
     selected: &[PendingChange],
     paths: &NythPaths,
@@ -69,11 +73,7 @@ fn apply_one_change(
     repo: &DotfilesRepo,
     change: &PendingChange,
 ) -> Result<PathBuf, NythError> {
-    let PendingChange::ModuleModified {
-        module: module_name,
-        relative_path,
-    } = change
-    else {
+    let PendingChange::WatchedPathModified { relative_path } = change else {
         // select_changes_to_apply already filters these out
         return Err(NythError::CommitIoFailed {
             path: PathBuf::new(),
@@ -81,22 +81,8 @@ fn apply_one_change(
         });
     };
 
-    let (_, module) = repo
-        .modules
-        .iter()
-        .find(|(name, _)| name == module_name)
-        .expect("select_changes_to_apply only returns changes for modules that exist in repo");
-
-    let remainder = relative_path
-        .strip_prefix(module.target.as_path())
-        .unwrap_or(Path::new(""));
-
     let source_in_upper = paths.upper.join(relative_path);
-    let destination = if remainder.as_os_str().is_empty() {
-        repo.root.join(&module.source)
-    } else {
-        repo.root.join(&module.source).join(remainder)
-    };
+    let destination = repo.root.join(relative_path);
 
     copy_one(&source_in_upper, &destination)?;
     Ok(destination)

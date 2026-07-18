@@ -5,23 +5,16 @@ use std::path::PathBuf;
 use nyth::cli::status::{
     DotfilesRepo, PendingChange, UpperEntry, diff_upper_against_repo, nyth_status,
 };
-use nyth::config::{Module, RelativeHomePath};
+use nyth::config::RelativeHomePath;
 use support::Workspace;
 
-fn module(target: &str) -> Module {
-    Module {
-        source: PathBuf::from("unused-in-these-tests"),
-        target: RelativeHomePath::new(target).expect("valid relative path"),
-        on_change: None,
-    }
+fn watched(target: &str) -> RelativeHomePath {
+    RelativeHomePath::new(target).expect("valid relative path")
 }
 
 #[test]
-fn diff_marks_module_owned_paths_as_module_modified() {
-    let repo = DotfilesRepo::new(
-        PathBuf::from("/unused"),
-        vec![("git".to_string(), module(".gitconfig"))],
-    );
+fn diff_marks_watched_paths_as_watched_path_modified() {
+    let repo = DotfilesRepo::new(PathBuf::from("/unused"), vec![watched(".gitconfig")]);
     let entries = vec![UpperEntry {
         relative_path: PathBuf::from(".gitconfig"),
     }];
@@ -30,20 +23,16 @@ fn diff_marks_module_owned_paths_as_module_modified() {
 
     assert_eq!(
         changes,
-        vec![PendingChange::ModuleModified {
-            module: "git".to_string(),
+        vec![PendingChange::WatchedPathModified {
             relative_path: PathBuf::from(".gitconfig"),
         }]
     );
 }
 
-// A file changed inside a directory-target module still belongs to that module, even though its path isn't literally equal to the module's target
+// A file changed inside a directory watched-path still counts as watched, even though its path isn't literally equal to the watched-path itself
 #[test]
-fn diff_marks_nested_file_under_directory_module_as_module_modified() {
-    let repo = DotfilesRepo::new(
-        PathBuf::from("/unused"),
-        vec![("hyprland".to_string(), module(".config/hypr"))],
-    );
+fn diff_marks_nested_file_under_directory_watched_path_as_watched_path_modified() {
+    let repo = DotfilesRepo::new(PathBuf::from("/unused"), vec![watched(".config/hypr")]);
     let entries = vec![UpperEntry {
         relative_path: PathBuf::from(".config/hypr/hyprland.conf"),
     }];
@@ -52,19 +41,15 @@ fn diff_marks_nested_file_under_directory_module_as_module_modified() {
 
     assert_eq!(
         changes,
-        vec![PendingChange::ModuleModified {
-            module: "hyprland".to_string(),
+        vec![PendingChange::WatchedPathModified {
             relative_path: PathBuf::from(".config/hypr/hyprland.conf"),
         }]
     );
 }
 
 #[test]
-fn diff_marks_unowned_paths_as_untracked() {
-    let repo = DotfilesRepo::new(
-        PathBuf::from("/unused"),
-        vec![("git".to_string(), module(".gitconfig"))],
-    );
+fn diff_marks_unwatched_paths_as_untracked() {
+    let repo = DotfilesRepo::new(PathBuf::from("/unused"), vec![watched(".gitconfig")]);
     let entries = vec![UpperEntry {
         relative_path: PathBuf::from(".config/random-app/state.db"),
     }];
@@ -80,7 +65,7 @@ fn diff_marks_unowned_paths_as_untracked() {
 }
 
 #[test]
-fn diff_is_pure_no_modules_no_entries_no_changes() {
+fn diff_is_pure_no_watched_paths_no_entries_no_changes() {
     let repo = DotfilesRepo::new(PathBuf::from("/unused"), vec![]);
     assert_eq!(diff_upper_against_repo(&[], &repo), vec![]);
 }
@@ -99,27 +84,22 @@ fn nyth_status_walks_upper_recursively_and_diffs_against_repo() {
 
     let repo = DotfilesRepo::new(
         ws.root.join("dotfiles"),
-        vec![
-            ("git".to_string(), module(".gitconfig")),
-            ("hyprland".to_string(), module(".config/hypr")),
-        ],
+        vec![watched(".gitconfig"), watched(".config/hypr")],
     );
 
     let mut changes = nyth_status(&paths, &repo).expect("status should succeed");
     changes.sort_by_key(|c| match c {
-        PendingChange::ModuleModified { relative_path, .. } => relative_path.clone(),
+        PendingChange::WatchedPathModified { relative_path } => relative_path.clone(),
         PendingChange::Untracked { relative_path } => relative_path.clone(),
     });
 
     assert_eq!(
         changes,
         vec![
-            PendingChange::ModuleModified {
-                module: "hyprland".to_string(),
+            PendingChange::WatchedPathModified {
                 relative_path: PathBuf::from(".config/hypr/hyprland.conf"),
             },
-            PendingChange::ModuleModified {
-                module: "git".to_string(),
+            PendingChange::WatchedPathModified {
                 relative_path: PathBuf::from(".gitconfig"),
             },
             PendingChange::Untracked {

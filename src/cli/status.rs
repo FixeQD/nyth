@@ -2,7 +2,7 @@ use std::fs;
 use std::os::unix::fs::FileTypeExt;
 use std::path::{Path, PathBuf};
 
-use crate::config::Module;
+use crate::config::RelativeHomePath;
 use crate::error::{NythError, StatusError};
 use crate::sys::paths::{NythPaths, resolve_identity_and_paths};
 
@@ -15,41 +15,41 @@ pub struct UpperEntry {
 /// One outstanding difference between `upper` and the dotfiles repo
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PendingChange {
-    /// Changed at a path some module owns: a real edit to a managed config.
-    ModuleModified {
-        module: String,
-        relative_path: PathBuf,
-    },
-    /// Changed at a path no module owns: something new, not managed by any known module
+    /// Changed at a path Home Manager watches: a real edit to a managed config.
+    WatchedPathModified { relative_path: PathBuf },
+    /// Changed at a path nobody watches: something new, not managed by Home Manager
     Untracked { relative_path: PathBuf },
 }
 
-/// The dotfiles source of truth: the modules known for this repo, enough to tell which module owns a given $HOME-relative path
+/// The dotfiles source of truth: `root` is a repo that mirrors $HOME 1:1
 pub struct DotfilesRepo {
     pub root: PathBuf,
-    pub modules: Vec<(String, Module)>,
+    pub watched_paths: Vec<RelativeHomePath>,
 }
 
 impl DotfilesRepo {
-    pub fn new(root: PathBuf, modules: Vec<(String, Module)>) -> Self {
-        Self { root, modules }
+    pub fn new(root: PathBuf, watched_paths: Vec<RelativeHomePath>) -> Self {
+        Self {
+            root,
+            watched_paths,
+        }
     }
 
-    /// Pure lookup: which module owns `entry`'s path
+    /// Pure lookup: is `entry`'s path a watched path, or under one
     pub fn compare(&self, entry: &UpperEntry) -> Option<PendingChange> {
-        let owner = self.modules.iter().find(|(_, module)| {
-            let target = module.target.as_path();
+        let is_watched = self.watched_paths.iter().any(|watched| {
+            let target = watched.as_path();
             entry.relative_path == target || entry.relative_path.starts_with(target)
         });
 
-        Some(match owner {
-            Some((name, _)) => PendingChange::ModuleModified {
-                module: name.clone(),
+        Some(if is_watched {
+            PendingChange::WatchedPathModified {
                 relative_path: entry.relative_path.clone(),
-            },
-            None => PendingChange::Untracked {
+            }
+        } else {
+            PendingChange::Untracked {
                 relative_path: entry.relative_path.clone(),
-            },
+            }
         })
     }
 }
