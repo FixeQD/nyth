@@ -1,4 +1,3 @@
-use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 pub mod commit;
@@ -7,7 +6,7 @@ pub mod status;
 
 use commit::commit;
 use session::{parse_session_args, run_session};
-use status::{DotfilesRepo, status};
+use status::{parse_repo_args, status};
 
 /// Dispatches on `args[1]` (the subcommand). `args[0]` is the program name,
 /// same convention as `std::env::args()`, so callers can pass that straight
@@ -15,8 +14,8 @@ use status::{DotfilesRepo, status};
 pub fn run(args: &[String]) -> ExitCode {
     match args.get(1).map(String::as_str) {
         Some("session") => run_session_cmd(&args[2..]),
-        Some("status") => run_status(args.get(2).map(String::as_str)),
-        Some("commit") => run_commit(args.get(2).map(String::as_str)),
+        Some("status") => run_status(&args[2..]),
+        Some("commit") => run_commit(&args[2..]),
         Some(other) => {
             eprintln!("nyth: unknown command '{other}'");
             ExitCode::FAILURE
@@ -46,8 +45,14 @@ fn run_session_cmd(args: &[String]) -> ExitCode {
     ExitCode::FAILURE
 }
 
-fn run_status(repo_root_arg: Option<&str>) -> ExitCode {
-    let repo = dotfiles_repo(repo_root_arg);
+fn run_status(args: &[String]) -> ExitCode {
+    let repo = match parse_repo_args(args) {
+        Ok(repo_args) => repo_args.into_repo(),
+        Err(e) => {
+            eprintln!("nyth status: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
 
     match status(&repo) {
         Ok(changes) if changes.is_empty() => {
@@ -67,8 +72,14 @@ fn run_status(repo_root_arg: Option<&str>) -> ExitCode {
     }
 }
 
-fn run_commit(repo_root_arg: Option<&str>) -> ExitCode {
-    let repo = dotfiles_repo(repo_root_arg);
+fn run_commit(args: &[String]) -> ExitCode {
+    let repo = match parse_repo_args(args) {
+        Ok(repo_args) => repo_args.into_repo(),
+        Err(e) => {
+            eprintln!("nyth commit: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
 
     match commit(&repo) {
         Ok(report) if report.applied.is_empty() => {
@@ -86,9 +97,4 @@ fn run_commit(repo_root_arg: Option<&str>) -> ExitCode {
             ExitCode::FAILURE
         }
     }
-}
-
-fn dotfiles_repo(repo_root_arg: Option<&str>) -> DotfilesRepo {
-    let root: PathBuf = Path::new(repo_root_arg.unwrap_or(".")).to_path_buf();
-    DotfilesRepo::new(root, Vec::new(), Vec::new())
 }
