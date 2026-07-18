@@ -34,7 +34,10 @@ impl fmt::Display for NamespaceError {
                 write!(f, "no passwd entry found for uid {uid}")
             }
             Self::HomeLookupFailed { uid, errno } => {
-                write!(f, "failed to look up home directory for uid {uid} (errno {errno})")
+                write!(
+                    f,
+                    "failed to look up home directory for uid {uid} (errno {errno})"
+                )
             }
         }
     }
@@ -48,6 +51,7 @@ pub enum OverlayError {
     ScratchTmpfsMountFailed { errno: i32 },
     ScratchSubdirFailed { path: PathBuf, errno: i32 },
     HomeSnapshotFailed { errno: i32 },
+    WatchedPathUnresolved { path: PathBuf, errno: i32 },
     OverlayApiUnsupported { errno: i32 },
     MountFailed { target: PathBuf, errno: i32 },
 }
@@ -56,7 +60,10 @@ impl fmt::Display for OverlayError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::ScratchDirCreateFailed { errno } => {
-                write!(f, "failed to create scratch tmpfs directory (errno {errno})")
+                write!(
+                    f,
+                    "failed to create scratch tmpfs directory (errno {errno})"
+                )
             }
             Self::ScratchTmpfsMountFailed { errno } => {
                 write!(f, "failed to mount scratch tmpfs (errno {errno})")
@@ -65,14 +72,26 @@ impl fmt::Display for OverlayError {
                 write!(f, "failed to create {} (errno {errno})", path.display())
             }
             Self::HomeSnapshotFailed { errno } => {
-                write!(f, "failed to create read-only home snapshot (errno {errno})")
+                write!(
+                    f,
+                    "failed to create read-only home snapshot (errno {errno})"
+                )
             }
+            Self::WatchedPathUnresolved { path, errno } => write!(
+                f,
+                "failed to resolve watched path {} to its real /nix/store target (errno {errno})",
+                path.display()
+            ),
             Self::OverlayApiUnsupported { errno } => write!(
                 f,
                 "kernel too old or overlay filesystem module not loaded (errno {errno})"
             ),
             Self::MountFailed { target, errno } => {
-                write!(f, "failed to mount overlay at {} (errno {errno})", target.display())
+                write!(
+                    f,
+                    "failed to mount overlay at {} (errno {errno})",
+                    target.display()
+                )
             }
         }
     }
@@ -106,14 +125,37 @@ pub enum NythError {
     Namespace(NamespaceError),
     Overlay(OverlayError),
     Status(StatusError),
-    ConfigInvalid { path: PathBuf, reason: ConfigInvalidReason },
-    ModuleTargetEscapesHome { module: String, target: PathBuf },
-    ModuleBuildFailed { module: String, message: String },
-    BuildIoFailed { path: PathBuf, message: String },
-    SessionIoFailed { path: PathBuf, message: String },
-    CommitIoFailed { path: PathBuf, message: String },
-    ExecFailed { program: String, message: String },
-    NotBuilt { expected_lower: PathBuf },
+    ConfigInvalid {
+        path: PathBuf,
+        reason: ConfigInvalidReason,
+    },
+    ModuleTargetEscapesHome {
+        module: String,
+        target: PathBuf,
+    },
+    ModuleBuildFailed {
+        module: String,
+        message: String,
+    },
+    BuildIoFailed {
+        path: PathBuf,
+        message: String,
+    },
+    SessionIoFailed {
+        path: PathBuf,
+        message: String,
+    },
+    CommitIoFailed {
+        path: PathBuf,
+        message: String,
+    },
+    ExecFailed {
+        program: String,
+        message: String,
+    },
+    NotBuilt {
+        expected_lower: PathBuf,
+    },
     NoTargetCommand,
 }
 

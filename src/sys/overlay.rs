@@ -1,4 +1,5 @@
 use std::ffi::{CStr, CString, OsString};
+use std::fs;
 use std::os::fd::OwnedFd;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
@@ -9,6 +10,7 @@ use rustix::mount::{
     fsconfig_set_string, fsmount, fsopen, move_mount,
 };
 
+use crate::config::RelativeHomePath;
 use crate::error::OverlayError;
 use crate::sys::errno;
 use crate::sys::namespace::CallerIdentity;
@@ -85,11 +87,17 @@ fn to_cstring(path: impl AsRef<Path>) -> CString {
 /// Read-only bind mount of $HOME as it was before the overlay goes on top
 /// Btw without this, mounting the overlay straight onto $HOME would shadow everything outside the configured modules for the whole session
 pub fn mount_home_snapshot(home: &Path, scratch: &ScratchTmpfs) -> Result<(), OverlayError> {
-    bind_mount(home, &scratch.home_snapshot)?;
-    remount_readonly(&scratch.home_snapshot)
+    bind_mount_readonly(home, &scratch.home_snapshot)
+        .map_err(|errno| OverlayError::HomeSnapshotFailed { errno })
 }
 
-fn bind_mount(source: &Path, target: &Path) -> Result<(), OverlayError> {
+/// Bind mount + remount read-only in one call, raw errno on failure
+fn bind_mount_readonly(source: &Path, target: &Path) -> Result<(), i32> {
+    bind_mount(source, target)?;
+    remount_readonly(target)
+}
+
+fn bind_mount(source: &Path, target: &Path) -> Result<(), i32> {
     let ret = unsafe {
         libc::mount(
             to_cstring(source).as_ptr(),
@@ -100,14 +108,14 @@ fn bind_mount(source: &Path, target: &Path) -> Result<(), OverlayError> {
         )
     };
     if ret != 0 {
-        return Err(OverlayError::HomeSnapshotFailed { errno: errno() });
+        return Err(errno());
     }
     Ok(())
 }
 
 // Two-step bind+remount (MS_RDONLY ignored on initial MS_BIND).
 // Flags repeated on both calls: if source's host mount already has them locked (e.g. /tmp nosuid,nodev), omitting them here gets EPERM (mount_namespaces(7))
-fn remount_readonly(target: &Path) -> Result<(), OverlayError> {
+fn remount_readonly(target: &Path) -> Result<(), i32> {
     let ret = unsafe {
         libc::mount(
             std::ptr::null(),
@@ -118,9 +126,62 @@ fn remount_readonly(target: &Path) -> Result<(), OverlayError> {
         )
     };
     if ret != 0 {
-        return Err(OverlayError::HomeSnapshotFailed { errno: errno() });
+        return Err(errno());
     }
     Ok(())
+}
+
+/// For each watched path, dereferences the Home Manager-generated symlink at `home_snapshot/<path>` down to its real target in `/nix/store`, then bind-mounts that target read-only at `lower/<path>`
+pub fn resolve_watched_paths(
+    scratch: &ScratchTmpfs,
+    lower: &Path,
+    watched_paths: &[RelativeHomePath],
+) -> Result<(), OverlayError> {
+    for path in watched_paths {
+        resolve_one_watched_path(scratch, lower, path)?;
+    }
+    Ok(())
+}
+
+fn resolve_one_watched_path(
+    scratch: &ScratchTmpfs,
+    lower: &Path,
+    path: &RelativeHomePath,
+) -> Result<(), OverlayError> {
+    let home_managed_entry = scratch.home_snapshot.join(path.as_path());
+    let store_target =
+        fs::canonicalize(&home_managed_entry).map_err(|e| watched_path_unresolved(path, &e))?;
+
+    let lower_target = lower.join(path.as_path());
+    create_bind_mountpoint(&lower_target, &store_target)
+        .map_err(|e| watched_path_unresolved(path, &e))?;
+
+    bind_mount_readonly(&store_target, &lower_target).map_err(|errno| {
+        OverlayError::WatchedPathUnresolved {
+            path: path.as_path().to_path_buf(),
+            errno,
+        }
+    })
+}
+
+fn watched_path_unresolved(path: &RelativeHomePath, e: &std::io::Error) -> OverlayError {
+    OverlayError::WatchedPathUnresolved {
+        path: path.as_path().to_path_buf(),
+        errno: e.raw_os_error().unwrap_or(0),
+    }
+}
+
+/// Bind mount targets must already exist and match the source's type
+fn create_bind_mountpoint(lower_target: &Path, store_target: &Path) -> std::io::Result<()> {
+    if let Some(parent) = lower_target.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    if store_target.is_dir() {
+        fs::create_dir(lower_target)
+    } else {
+        fs::File::create(lower_target).map(|_| ())
+    }
 }
 
 /// Mounts overlayfs at `target`: lowerdir = `lower` over `scratch.home_snapshot`, upperdir/workdir from `scratch`
