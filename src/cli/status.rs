@@ -12,46 +12,62 @@ pub struct UpperEntry {
     pub relative_path: PathBuf,
 }
 
-/// One outstanding difference between `upper` and the dotfiles repo
+/// One outstanding difference between `upper` and what Home Manager knows about that path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PendingChange {
-    /// Changed at a path Home Manager watches: a real edit to a managed config.
-    WatchedPathModified { relative_path: PathBuf },
-    /// Changed at a path nobody watches: something new, not managed by Home Manager
+    /// Watched by Home Manager, and backed by a real source file in the dotfiles repo
+    /// (`home.file.<name>.source` pointing at a path the user wrote not rendered one)
+    RepoBacked { relative_path: PathBuf },
+    /// Watched by Home Manager, but rendered by a `programs.*` module from Nix options
+    /// (`home.file.<name>.text` was set)
+    Generated { relative_path: PathBuf },
+    /// Changed at a path nobody watches: something new, not managed by Home Manager at all
     Untracked { relative_path: PathBuf },
 }
 
-/// The dotfiles source of truth: `root` is a repo that mirrors $HOME 1:1
+/// The dotfiles source of truth: `root` is a repo that mirrors $HOME 1:1 for the repo-backed subset
 pub struct DotfilesRepo {
     pub root: PathBuf,
-    pub watched_paths: Vec<RelativeHomePath>,
+    pub repo_backed_paths: Vec<RelativeHomePath>,
+    pub generated_paths: Vec<RelativeHomePath>,
 }
 
 impl DotfilesRepo {
-    pub fn new(root: PathBuf, watched_paths: Vec<RelativeHomePath>) -> Self {
+    pub fn new(
+        root: PathBuf,
+        repo_backed_paths: Vec<RelativeHomePath>,
+        generated_paths: Vec<RelativeHomePath>,
+    ) -> Self {
         Self {
             root,
-            watched_paths,
+            repo_backed_paths,
+            generated_paths,
         }
     }
 
-    /// Pure lookup: is `entry`'s path a watched path, or under one
-    pub fn compare(&self, entry: &UpperEntry) -> Option<PendingChange> {
-        let is_watched = self.watched_paths.iter().any(|watched| {
-            let target = watched.as_path();
-            entry.relative_path == target || entry.relative_path.starts_with(target)
-        });
-
-        Some(if is_watched {
-            PendingChange::WatchedPathModified {
+    /// Pure lookup: which of the three states does `entry`'s path fall into
+    pub fn compare(&self, entry: &UpperEntry) -> PendingChange {
+        if matches_watched_path(&self.repo_backed_paths, &entry.relative_path) {
+            PendingChange::RepoBacked {
+                relative_path: entry.relative_path.clone(),
+            }
+        } else if matches_watched_path(&self.generated_paths, &entry.relative_path) {
+            PendingChange::Generated {
                 relative_path: entry.relative_path.clone(),
             }
         } else {
             PendingChange::Untracked {
                 relative_path: entry.relative_path.clone(),
             }
-        })
+        }
     }
+}
+
+/// `path` matches a watched-path if it's literally that path, or nested under it
+fn matches_watched_path(watched_paths: &[RelativeHomePath], path: &Path) -> bool {
+    watched_paths
+        .iter()
+        .any(|watched| path == watched.as_path() || path.starts_with(watched.as_path()))
 }
 
 /// Resolves the caller's identity-scoped paths, then reports pending changes against `repo`
@@ -67,7 +83,7 @@ pub fn diff_upper_against_repo(
 ) -> Vec<PendingChange> {
     upper_entries
         .iter()
-        .filter_map(|entry| repo.compare(entry))
+        .map(|entry| repo.compare(entry))
         .collect()
 }
 

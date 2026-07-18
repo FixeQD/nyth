@@ -99,14 +99,36 @@ impl fmt::Display for OverlayError {
 
 impl std::error::Error for OverlayError {}
 
+/// Why a `PendingChange` at `path` was refused, distinct from an I/O failure while applying one that is committable
+#[derive(Debug)]
+pub enum NotCommittableReason {
+    /// Rendered by a `programs.*` module from Nix options; no source file in the repo to write to
+    Generated,
+    /// Not managed by Home Manager at all
+    Untracked,
+}
+
 #[derive(Debug)]
 pub enum NythError {
     Namespace(NamespaceError),
     Overlay(OverlayError),
     Status(StatusError),
-    SessionIoFailed { path: PathBuf, message: String },
-    CommitIoFailed { path: PathBuf, message: String },
-    ExecFailed { program: String, message: String },
+    SessionIoFailed {
+        path: PathBuf,
+        message: String,
+    },
+    CommitIoFailed {
+        path: PathBuf,
+        message: String,
+    },
+    NotCommittable {
+        path: PathBuf,
+        reason: NotCommittableReason,
+    },
+    ExecFailed {
+        program: String,
+        message: String,
+    },
     NoTargetCommand,
 }
 
@@ -122,6 +144,22 @@ impl fmt::Display for NythError {
             Self::CommitIoFailed { path, message } => {
                 write!(f, "commit failed at {}: {message}", path.display())
             }
+            Self::NotCommittable {
+                path,
+                reason: NotCommittableReason::Generated,
+            } => write!(
+                f,
+                "{} is rendered by a programs.* module, not backed by a repo file — nothing to commit it to",
+                path.display()
+            ),
+            Self::NotCommittable {
+                path,
+                reason: NotCommittableReason::Untracked,
+            } => write!(
+                f,
+                "{} is not managed by Home Manager, cannot commit an untracked path",
+                path.display()
+            ),
             Self::ExecFailed { program, message } => {
                 write!(f, "failed to exec '{program}': {message}")
             }

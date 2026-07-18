@@ -90,5 +90,5 @@ fn run_commit(repo_root_arg: Option<&str>) -> ExitCode {
 
 fn dotfiles_repo(repo_root_arg: Option<&str>) -> DotfilesRepo {
     let root: PathBuf = Path::new(repo_root_arg.unwrap_or(".")).to_path_buf();
-    DotfilesRepo::new(root, Vec::new())
+    DotfilesRepo::new(root, Vec::new(), Vec::new())
 }

@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use crate::cli::status::{DotfilesRepo, PendingChange, nyth_status};
 use crate::config::RelativeHomePath;
-use crate::error::NythError;
+use crate::error::{NotCommittableReason, NythError};
 use crate::sys::paths::{NythPaths, resolve_identity_and_paths};
 
 /// Which pending changes `nyth commit` should actually write back to the repo
@@ -26,14 +26,14 @@ pub fn select_changes_to_apply(
     pending
         .iter()
         .filter(|change| match change {
-            PendingChange::WatchedPathModified { relative_path } => match selection {
+            PendingChange::RepoBacked { relative_path } => match selection {
                 CommitSelection::All => true,
                 CommitSelection::WatchedPaths(paths) => paths.iter().any(|watched| {
                     let target = watched.as_path();
                     relative_path == target || relative_path.starts_with(target)
                 }),
             },
-            PendingChange::Untracked { .. } => false,
+            PendingChange::Generated { .. } | PendingChange::Untracked { .. } => false,
         })
         .cloned()
         .collect()
@@ -73,12 +73,20 @@ fn apply_one_change(
     repo: &DotfilesRepo,
     change: &PendingChange,
 ) -> Result<PathBuf, NythError> {
-    let PendingChange::WatchedPathModified { relative_path } = change else {
-        // select_changes_to_apply already filters these out
-        return Err(NythError::CommitIoFailed {
-            path: PathBuf::new(),
-            message: "cannot commit an untracked path, no repo destination for it".to_string(),
-        });
+    let relative_path = match change {
+        PendingChange::RepoBacked { relative_path } => relative_path,
+        PendingChange::Generated { relative_path } => {
+            return Err(NythError::NotCommittable {
+                path: relative_path.clone(),
+                reason: NotCommittableReason::Generated,
+            });
+        }
+        PendingChange::Untracked { relative_path } => {
+            return Err(NythError::NotCommittable {
+                path: relative_path.clone(),
+                reason: NotCommittableReason::Untracked,
+            });
+        }
     };
 
     let source_in_upper = paths.upper.join(relative_path);
