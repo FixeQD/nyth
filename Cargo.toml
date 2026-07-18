@@ -6,3 +6,10 @@ edition = "2024"
 [dependencies]
 libc = "0.2"
 rustix = { version = "1", features = ["mount", "fs", "process"] }
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true
+opt-level = "z"
+panic = "abort"
