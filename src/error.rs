@@ -153,9 +153,6 @@ pub enum NythError {
         program: String,
         message: String,
     },
-    NotBuilt {
-        expected_lower: PathBuf,
-    },
     NoTargetCommand,
 }
 
@@ -188,11 +185,6 @@ impl fmt::Display for NythError {
             Self::ExecFailed { program, message } => {
                 write!(f, "failed to exec '{program}': {message}")
             }
-            Self::NotBuilt { expected_lower } => write!(
-                f,
-                "session not built yet, expected lower dir at {}",
-                expected_lower.display()
-            ),
             Self::NoTargetCommand => write!(f, "no command given to run inside the session"),
         }
     }

@@ -1,15 +1,16 @@
 mod support;
 
 use std::fs;
+use std::os::unix::fs::symlink;
 
-use nyth::cli::build::build_into;
 use nyth::cli::session::run_session_with;
+use nyth::config::RelativeHomePath;
 use nyth::error::{NamespaceError, NythError};
 use nyth::sys::namespace::CallerIdentity;
 use support::Workspace;
 
 #[test]
-fn run_session_execs_target_with_modules_and_home_snapshot_in_place() {
+fn run_session_execs_target_with_watched_paths_and_home_snapshot_in_place() {
     let real_identity = CallerIdentity::from_current_process().expect("syscalls don't fail");
     support::run_in_fork(|| run_in_child(&real_identity));
 }
@@ -22,13 +23,16 @@ fn run_in_child(real_identity: &CallerIdentity) -> i32 {
         return 1;
     }
 
-    // Already in $HOME before any module is applied, to prove home-snapshot keeps fr the rest of $HOME visible, not just the overlaid modules
+    // Already in $HOME before any watched path is resolved, to prove home-snapshot keeps the rest of $HOME visible, not just the watched entries
     ws.write("home/preexisting.txt", "was already here");
-    ws.write("dotfiles/gitconfig", "[user]\nname = nyth-test");
-    ws.write(
-        "nyth.toml",
-        "[modules.git]\nsource = \"./dotfiles/gitconfig\"\ntarget = \".gitconfig\"\n",
-    );
+
+    // Stands in for what Home Manager actually leaves in $HOME
+    ws.write("store/gitconfig", "[user]\nname = nyth-test");
+    let store_target = ws.root.join("store/gitconfig");
+    if symlink(&store_target, fake_home.join(".gitconfig")).is_err() {
+        eprintln!("failed to create symlink the way home-manager would");
+        return 2;
+    }
 
     let identity = CallerIdentity {
         uid: real_identity.uid,
@@ -36,13 +40,15 @@ fn run_in_child(real_identity: &CallerIdentity) -> i32 {
         home: fake_home.clone(),
     };
     let paths = ws.paths();
+    let watched = match RelativeHomePath::new(".gitconfig") {
+        Ok(path) => path,
+        Err(e) => {
+            eprintln!("RelativeHomePath::new failed: {e}");
+            return 3;
+        }
+    };
 
-    if let Err(e) = build_into(&ws.config_path(), &paths.lower) {
-        eprintln!("build_into failed: {e:?}");
-        return 5;
-    }
-
-    // Proves: module content visible, pre-existing $HOME content still visible
+    // Proves: watched-path content visible, pre-existing $HOME content still visible
     let marker = ws.root.join("session-ran.txt");
     let target_command = vec![
         "/bin/sh".to_string(),
@@ -55,7 +61,13 @@ fn run_in_child(real_identity: &CallerIdentity) -> i32 {
         ),
     ];
 
-    let error = run_session_with(&ws.config_path(), &target_command, &identity, &paths);
+    let error = run_session_with(
+        std::slice::from_ref(&watched),
+        &[],
+        &target_command,
+        &identity,
+        &paths,
+    );
 
     if let NythError::Namespace(NamespaceError::UserNamespacesDisabled) = error {
         // Same as tests/namespace.rs and tests/overlay.rs: environment-dependent

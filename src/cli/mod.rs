@@ -8,7 +8,7 @@ pub mod status;
 
 use build::build;
 use commit::commit;
-use session::run_session;
+use session::{parse_session_args, run_session};
 use status::status;
 
 /// Dispatches on `args[1]` (the subcommand). `args[0]` is the program name,
@@ -46,9 +46,20 @@ fn run_build(config_arg: Option<&str>) -> ExitCode {
     }
 }
 
-fn run_session_cmd(target_command: &[String]) -> ExitCode {
-    let config_path = Path::new("nyth.toml");
-    let error = run_session(config_path, target_command);
+fn run_session_cmd(args: &[String]) -> ExitCode {
+    let session_args = match parse_session_args(args) {
+        Ok(session_args) => session_args,
+        Err(e) => {
+            eprintln!("nyth session: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let error = run_session(
+        &session_args.watched_paths,
+        &session_args.env_overrides,
+        &session_args.target_command,
+    );
     eprintln!("nyth session failed: {error}");
     ExitCode::FAILURE
 }
