@@ -6,9 +6,7 @@ use std::path::Path;
 /// symlink would follow it and copy the target's content under the link's
 /// name, silently changing what kind of file ends up at the destination.
 ///
-/// Shared by `build` (repo -> lower) and `commit` (upper -> repo), same
-/// direction-agnostic operation either way: copy one file, preserve its
-/// symlink-ness.
+/// Used by `commit` (upper -> repo): copy one file, preserve its symlink-ness
 pub fn copy_file_preserving_symlinks(source: &Path, destination: &Path) -> std::io::Result<()> {
     if let Some(parent) = destination.parent() {
         fs::create_dir_all(parent)?;

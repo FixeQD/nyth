@@ -100,59 +100,13 @@ impl fmt::Display for OverlayError {
 impl std::error::Error for OverlayError {}
 
 #[derive(Debug)]
-pub enum ConfigInvalidReason {
-    ReadFailed { message: String },
-    InvalidTargetPath { module: String },
-    TomlParseFailed { message: String },
-}
-
-impl fmt::Display for ConfigInvalidReason {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::ReadFailed { message } => write!(f, "failed to read config file: {message}"),
-            Self::InvalidTargetPath { module } => {
-                write!(f, "module '{module}' has an invalid target path")
-            }
-            Self::TomlParseFailed { message } => write!(f, "failed to parse TOML: {message}"),
-        }
-    }
-}
-
-impl std::error::Error for ConfigInvalidReason {}
-
-#[derive(Debug)]
 pub enum NythError {
     Namespace(NamespaceError),
     Overlay(OverlayError),
     Status(StatusError),
-    ConfigInvalid {
-        path: PathBuf,
-        reason: ConfigInvalidReason,
-    },
-    ModuleTargetEscapesHome {
-        module: String,
-        target: PathBuf,
-    },
-    ModuleBuildFailed {
-        module: String,
-        message: String,
-    },
-    BuildIoFailed {
-        path: PathBuf,
-        message: String,
-    },
-    SessionIoFailed {
-        path: PathBuf,
-        message: String,
-    },
-    CommitIoFailed {
-        path: PathBuf,
-        message: String,
-    },
-    ExecFailed {
-        program: String,
-        message: String,
-    },
+    SessionIoFailed { path: PathBuf, message: String },
+    CommitIoFailed { path: PathBuf, message: String },
+    ExecFailed { program: String, message: String },
     NoTargetCommand,
 }
 
@@ -162,20 +116,6 @@ impl fmt::Display for NythError {
             Self::Namespace(e) => write!(f, "{e}"),
             Self::Overlay(e) => write!(f, "{e}"),
             Self::Status(e) => write!(f, "{e}"),
-            Self::ConfigInvalid { path, reason } => {
-                write!(f, "invalid config at {}: {reason}", path.display())
-            }
-            Self::ModuleTargetEscapesHome { module, target } => write!(
-                f,
-                "module '{module}' target {} escapes $HOME",
-                target.display()
-            ),
-            Self::ModuleBuildFailed { module, message } => {
-                write!(f, "failed to build module '{module}': {message}")
-            }
-            Self::BuildIoFailed { path, message } => {
-                write!(f, "build failed at {}: {message}", path.display())
-            }
             Self::SessionIoFailed { path, message } => {
                 write!(f, "session setup failed at {}: {message}", path.display())
             }
@@ -196,7 +136,6 @@ impl std::error::Error for NythError {
             Self::Namespace(e) => Some(e),
             Self::Overlay(e) => Some(e),
             Self::Status(e) => Some(e),
-            Self::ConfigInvalid { reason, .. } => Some(reason),
             _ => None,
         }
     }

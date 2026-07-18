@@ -1,10 +1,5 @@
-use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
-
-use serde::Deserialize;
-
-use crate::error::ConfigInvalidReason;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RelativeHomePath(PathBuf);
@@ -64,59 +59,4 @@ pub struct Module {
     pub source: PathBuf,
     pub target: RelativeHomePath,
     pub on_change: Option<ReloadCommand>,
-}
-
-#[derive(Debug, Clone)]
-pub struct NythConfig {
-    pub env: BTreeMap<String, String>,
-    /// (module name, module) in the order modules should layer into lowerdir
-    /// BTreeMap on the raw side already gives us a sorted by name order
-    pub modules: Vec<(String, Module)>,
-}
-
-// Mirrors nyth.toml
-// Domain types (RelativeHomePath, ReloadCommand) only show up after TryFrom, not at the serde boundary
-#[derive(Debug, Deserialize)]
-struct RawConfig {
-    #[serde(default)]
-    env: BTreeMap<String, String>,
-    #[serde(default)]
-    modules: BTreeMap<String, RawModule>,
-}
-
-#[derive(Debug, Deserialize)]
-struct RawModule {
-    source: PathBuf,
-    target: PathBuf,
-    on_change: Option<String>,
-}
-
-pub fn parse_nyth_toml(source: &str) -> Result<NythConfig, ConfigInvalidReason> {
-    let raw: RawConfig =
-        toml::from_str(source).map_err(|e| ConfigInvalidReason::TomlParseFailed {
-            message: e.to_string(),
-        })?;
-
-    let mut modules = Vec::with_capacity(raw.modules.len());
-    for (name, raw_module) in raw.modules {
-        let target = RelativeHomePath::new(raw_module.target).map_err(|_| {
-            ConfigInvalidReason::InvalidTargetPath {
-                module: name.clone(),
-            }
-        })?;
-
-        modules.push((
-            name,
-            Module {
-                source: raw_module.source,
-                target,
-                on_change: raw_module.on_change.map(ReloadCommand),
-            },
-        ));
-    }
-
-    Ok(NythConfig {
-        env: raw.env,
-        modules,
-    })
 }

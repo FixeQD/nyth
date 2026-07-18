@@ -1,8 +1,7 @@
 use std::path::{Path, PathBuf};
 
-use crate::cli::build::{config_dir_of, load_config};
-use crate::error::NythError;
 use crate::cli::status::{DotfilesRepo, PendingChange, nyth_status};
+use crate::error::NythError;
 use crate::sys::paths::{NythPaths, resolve_identity_and_paths};
 
 /// Which pending changes `nyth commit` should actually write back to the repo
@@ -37,21 +36,17 @@ pub fn select_changes_to_apply(
 }
 
 /// Resolves the caller's identity-scoped paths for real, then commits.
-/// Thin wrapper around `commit_into`, same split as `build`/`session`
-pub fn commit(config_path: &Path) -> Result<CommitReport, NythError> {
+/// Thin wrapper around `commit_into`, same split as `session`
+pub fn commit(repo: &DotfilesRepo) -> Result<CommitReport, NythError> {
     let (_, paths) = resolve_identity_and_paths()?;
-    commit_into(config_path, &paths)
+    commit_into(repo, &paths)
 }
 
-pub fn commit_into(config_path: &Path, paths: &NythPaths) -> Result<CommitReport, NythError> {
-    let config = load_config(config_path)?;
-    let config_dir = config_dir_of(config_path);
-    let repo = DotfilesRepo::new(config_dir.to_path_buf(), config.modules);
-
-    let pending = nyth_status(paths, &repo).map_err(NythError::Status)?;
+pub fn commit_into(repo: &DotfilesRepo, paths: &NythPaths) -> Result<CommitReport, NythError> {
+    let pending = nyth_status(paths, repo).map_err(NythError::Status)?;
     let selected = select_changes_to_apply(&pending, &CommitSelection::All);
 
-    apply_commit(&selected, paths, &repo)
+    apply_commit(&selected, paths, repo)
 }
 
 /// Writes each already-selected change back to its module's source in the local repo
@@ -107,8 +102,8 @@ fn apply_one_change(
     Ok(destination)
 }
 
-// Delegates to the same symlink-preserving copy build.rs uses, just wraps
-// the io::Error into this module's own error variant.
+// Same symlink-preserving copy fs_util provides everywhere else in the crate,
+// just wraps the io::Error into this module's own error variant.
 fn copy_one(source: &Path, destination: &Path) -> Result<(), NythError> {
     crate::fs_util::copy_file_preserving_symlinks(source, destination)
         .map_err(|e| commit_io_failed(destination, &e))

@@ -6,5 +6,3 @@ edition = "2024"
 [dependencies]
 libc = "0.2"
 rustix = { version = "1", features = ["mount", "fs", "process"] }
-serde = { version = "1", features = ["derive"] }
-toml = "1"

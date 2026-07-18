@@ -5,15 +5,15 @@ use nyth::sys::paths::NythPaths;
 
 /// A throwaway directory under /tmp, torn down when it goes out of scope
 /// (even on panic, unlike a manual `remove_dir_all` at the end of a test).
-/// For tests that need plain file I/O (build/commit/status) with no
-/// mounting or namespaces involved.
+/// For tests that need plain file I/O (commit/status) with no mounting or
+/// namespaces involved.
 pub struct Workspace {
     pub root: PathBuf,
 }
 
 impl Workspace {
-    /// `name` only has to be unique within one test *binary* (build.rs,
-    /// commit.rs, etc. are separate processes, so reusing a name across
+    /// `name` only has to be unique within one test *binary* (commit.rs,
+    /// status.rs, etc. are separate processes, so reusing a name across
     /// binaries is fine); it has to be unique among tests that run
     /// concurrently in the same binary, since cargo test runs `#[test]`s in
     /// parallel threads of the same process.
@@ -28,16 +28,6 @@ impl Workspace {
         let path = self.root.join(relative);
         fs::create_dir_all(path.parent().unwrap()).expect("create parent dirs");
         fs::write(path, contents).expect("write workspace file");
-    }
-
-    pub fn config_path(&self) -> PathBuf {
-        self.root.join("nyth.toml")
-    }
-
-    /// Standalone `lower` dir, for tests exercising `build_into` on its own
-    /// with no full NythPaths layout involved.
-    pub fn lower_path(&self) -> PathBuf {
-        self.root.join("lower")
     }
 
     /// A full NythPaths layout rooted in this workspace, for tests

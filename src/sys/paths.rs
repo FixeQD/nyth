@@ -26,7 +26,7 @@ impl NythPaths {
 }
 
 /// Resolves the real caller's identity and identity-scoped paths together.
-/// Shared by build/session/status/commit, one place instead of four copies
+/// Shared by session/status/commit, one place instead of three copies
 /// of the same two lines.
 pub fn resolve_identity_and_paths() -> Result<(CallerIdentity, NythPaths), NythError> {
     let identity = CallerIdentity::from_current_process().map_err(NythError::Namespace)?;

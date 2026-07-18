@@ -1,22 +1,19 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-pub mod build;
 pub mod commit;
 pub mod session;
 pub mod status;
 
-use build::build;
 use commit::commit;
 use session::{parse_session_args, run_session};
-use status::status;
+use status::{DotfilesRepo, status};
 
 /// Dispatches on `args[1]` (the subcommand). `args[0]` is the program name,
 /// same convention as `std::env::args()`, so callers can pass that straight
 /// through without stripping anything first.
 pub fn run(args: &[String]) -> ExitCode {
     match args.get(1).map(String::as_str) {
-        Some("build") => run_build(args.get(2).map(String::as_str)),
         Some("session") => run_session_cmd(&args[2..]),
         Some("status") => run_status(args.get(2).map(String::as_str)),
         Some("commit") => run_commit(args.get(2).map(String::as_str)),
@@ -25,22 +22,7 @@ pub fn run(args: &[String]) -> ExitCode {
             ExitCode::FAILURE
         }
         None => {
-            eprintln!("usage: nyth <build|session|status|commit> [args]");
-            ExitCode::FAILURE
-        }
-    }
-}
-
-fn run_build(config_arg: Option<&str>) -> ExitCode {
-    let config_path = Path::new(config_arg.unwrap_or("nyth.toml"));
-
-    match build(config_path) {
-        Ok(paths) => {
-            println!("built lowerdir at {}", paths.lower.display());
-            ExitCode::SUCCESS
-        }
-        Err(e) => {
-            eprintln!("nyth build failed: {e}");
+            eprintln!("usage: nyth <session|status|commit> [args]");
             ExitCode::FAILURE
         }
     }
@@ -64,10 +46,10 @@ fn run_session_cmd(args: &[String]) -> ExitCode {
     ExitCode::FAILURE
 }
 
-fn run_status(config_arg: Option<&str>) -> ExitCode {
-    let config_path = Path::new(config_arg.unwrap_or("nyth.toml"));
+fn run_status(repo_root_arg: Option<&str>) -> ExitCode {
+    let repo = dotfiles_repo(repo_root_arg);
 
-    match status(config_path) {
+    match status(&repo) {
         Ok(changes) if changes.is_empty() => {
             println!("nothing to commit");
             ExitCode::SUCCESS
@@ -85,10 +67,10 @@ fn run_status(config_arg: Option<&str>) -> ExitCode {
     }
 }
 
-fn run_commit(config_arg: Option<&str>) -> ExitCode {
-    let config_path = Path::new(config_arg.unwrap_or("nyth.toml"));
+fn run_commit(repo_root_arg: Option<&str>) -> ExitCode {
+    let repo = dotfiles_repo(repo_root_arg);
 
-    match commit(config_path) {
+    match commit(&repo) {
         Ok(report) if report.applied.is_empty() => {
             println!("nothing to commit");
             ExitCode::SUCCESS
@@ -104,4 +86,9 @@ fn run_commit(config_arg: Option<&str>) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn dotfiles_repo(repo_root_arg: Option<&str>) -> DotfilesRepo {
+    let root: PathBuf = Path::new(repo_root_arg.unwrap_or(".")).to_path_buf();
+    DotfilesRepo::new(root, Vec::new())
 }

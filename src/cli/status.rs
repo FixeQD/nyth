@@ -2,7 +2,6 @@ use std::fs;
 use std::os::unix::fs::FileTypeExt;
 use std::path::{Path, PathBuf};
 
-use crate::cli::build::{config_dir_of, load_config};
 use crate::config::Module;
 use crate::error::{NythError, StatusError};
 use crate::sys::paths::{NythPaths, resolve_identity_and_paths};
@@ -21,11 +20,11 @@ pub enum PendingChange {
         module: String,
         relative_path: PathBuf,
     },
-    /// Changed at a path no module owns: something new, not managed by any module in nyth.toml
+    /// Changed at a path no module owns: something new, not managed by any known module
     Untracked { relative_path: PathBuf },
 }
 
-/// The dotfiles source of truth: `nyth.toml`'s modules, enough to tell which module owns a given $HOME-relative path
+/// The dotfiles source of truth: the modules known for this repo, enough to tell which module owns a given $HOME-relative path
 pub struct DotfilesRepo {
     pub root: PathBuf,
     pub modules: Vec<(String, Module)>,
@@ -55,15 +54,10 @@ impl DotfilesRepo {
     }
 }
 
-/// Resolves the caller's identity-scoped paths and config fr, then reports pending changes
-pub fn status(config_path: &Path) -> Result<Vec<PendingChange>, NythError> {
+/// Resolves the caller's identity-scoped paths, then reports pending changes against `repo`
+pub fn status(repo: &DotfilesRepo) -> Result<Vec<PendingChange>, NythError> {
     let (_, paths) = resolve_identity_and_paths()?;
-
-    let config = load_config(config_path)?;
-    let config_dir = config_dir_of(config_path);
-    let repo = DotfilesRepo::new(config_dir.to_path_buf(), config.modules);
-
-    nyth_status(&paths, &repo).map_err(NythError::Status)
+    nyth_status(&paths, repo).map_err(NythError::Status)
 }
 
 /// Given what's already in `upper` and what the repo knows about, which changes are pending
