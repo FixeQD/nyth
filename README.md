@@ -2,8 +2,6 @@
 <h1>Nyth</h1>
 </div>
 
----
-
 ## The problem
 
 Home Manager symlinks your configs out of the read-only Nix store. That's fine until some app
