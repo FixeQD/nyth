@@ -18,18 +18,31 @@ let
       )
       (builtins.readDir source);
 
+  normalizeName = name:
+    if lib.hasPrefix "/" name then
+      let homePrefix = "${config.home.homeDirectory}/"; in
+      if lib.hasPrefix homePrefix name then lib.removePrefix homePrefix name else null
+    else
+      name;
+
   expandFile = name: fileCfg:
     if (fileCfg.recursive or false) && fileCfg.source != null then
       map (rel: "${name}/${rel}") (builtins.attrNames (walkRecursiveSource fileCfg.source ""))
     else
       [ name ];
 
-  expanded = lib.mapAttrsToList
-    (name: fileCfg: {
-      paths = expandFile name fileCfg;
-      generated = fileCfg.text != null;
-    })
-    allFiles;
+  expanded = builtins.filter (e: e != null) (
+    lib.mapAttrsToList
+      (name: fileCfg:
+        let relName = normalizeName name; in
+        if relName == null then null
+        else {
+          paths = expandFile relName fileCfg;
+          generated = fileCfg.text != null;
+        }
+      )
+      allFiles
+  );
 
   watchedPaths = lib.concatMap (e: e.paths) expanded;
   repoBackedPaths = lib.concatMap (e: if e.generated then [ ] else e.paths) expanded;
