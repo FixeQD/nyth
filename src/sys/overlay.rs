@@ -177,6 +177,10 @@ fn create_bind_mountpoint(lower_target: &Path, store_target: &Path) -> std::io::
         fs::create_dir_all(parent)?;
     }
 
+    if lower_target.exists() {
+        return Ok(()); // leftover mountpoint from a prior session; bind_mount_readonly redoes the actual mount anyway
+    }
+
     if store_target.is_dir() {
         fs::create_dir(lower_target)
     } else {
