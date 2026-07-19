@@ -10,10 +10,11 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    # nyth session does unshare(CLONE_NEWUSER | CLONE_NEWNS) unprivileged
-    security.allowUserNamespaces = true;
+    boot.kernel.sysctl."kernel.unprivileged_userns_clone" = lib.mkDefault 1;
 
     environment.etc."profile.d/nyth.sh".text = ''
+      # nyth-shell only exists for users with programs.nyth.enable in their own
+      # Home Manager config — everyone else's login runs through untouched.
       if [ -z "''${NYTH_SESSION_ACTIVE-}" ] && command -v nyth-shell >/dev/null 2>&1; then
           export NYTH_SESSION_ACTIVE=1
           exec nyth-shell session
