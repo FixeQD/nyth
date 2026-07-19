@@ -24,8 +24,10 @@
 
             cargoLock.lockFile = ./Cargo.lock;
 
-            # The test suite forks and calls unshare(CLONE_NEWUSER)
-            # the Nix build8 sandbox has neither CAP_SYS_ADMIN nor unprivileged user namespaces available
+            # The test suite forks and mounts real overlayfs/tmpfs, which needs CAP_SYS_ADMIN
+            # on the host mount namespace -- the Nix build sandbox has neither that nor a
+            # writable /run, so most of it self-skips there anyway. Left off for the package
+            # build regardless, same as before.
             doCheck = false;
 
             meta = {
@@ -38,8 +40,6 @@
         });
 
       homeManagerModules.default = import ./modules/nyth.nix { inherit self; };
-
-      nixosModules.default = import ./modules/nyth-nixos.nix;
 
       devShells = forAllSystems (system:
         let

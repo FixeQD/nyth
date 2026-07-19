@@ -10,19 +10,21 @@ sharing a file with the settings. Instead of a clean permission error it gets `E
 depending on the app, it either crashes, corrupts something mid-write, or quietly forgets what
 you told it.
 
-## The session
+## The overlay
 
-Nyth doesn't patch the apps or Home Manager. It opens a mount namespace with an overlayfs write
-layer on top of your real `$HOME`, and runs inside it - your login shell, so everything you do
-for the rest of that login lives inside the same overlay. Every managed config looks ordinary
-and writable the whole time. When the namespace ends, so does the overlay - outside it, nothing
-ever changed. What's left behind is a diff of whatever got written.
+Nyth doesn't patch the apps or Home Manager. `nyth mount --for-user <name>`, run as root, sets
+up a persistent OverlayFS write layer over that user's real `$HOME`: every managed config looks
+ordinary and writable, for as long as the mount lives - not just for one login. Nothing about
+nyth is a session tied to a login; the mount is a durable piece of system state, the same as any
+other mount on the box, until `nyth unmount --for-user <name>` or a reboot takes it down. What's
+left behind on top is a diff of whatever got written.
 
 ## Status and commit
 
-`nyth status` shows that diff. `nyth commit` writes the keepers back to wherever they actually
-belong - the real source file in your **local** dotfiles repo - and refuses, loudly, anything it doesn't
-have a real destination for.
+`nyth status --for-user <name>` shows that diff. `nyth commit --for-user <name>` writes the
+keepers back to wherever they actually belong - the real source file in your **local** dotfiles
+repo - and refuses, loudly, anything it doesn't have a real destination for. Both read
+`/run/nyth/<name>/upper` directly and don't care whether the overlay is currently mounted or not.
 
 ## Generated configs
 
@@ -35,8 +37,21 @@ back into an option path is a per-module problem with no general answer.
 
 ## Using it
 
-Nothing about nyth is meant to be typed by hand. The Home Manager module reads your `home.file`
-the same way Home Manager itself already does, and generates a wrapper with everything baked in:
+Nyth is a plain binary: four independent commands, no config file, no daemon, no idea what init system (if any) called it
+
+```
+nyth mount   --for-user <name> [--watched-path <rel> ...]
+nyth unmount --for-user <name> [--purge]
+nyth status  --for-user <name> --repo-root <path> [--repo-backed <rel> ...] [--generated <rel> ...]
+nyth commit  --for-user <name> --repo-root <path> [--repo-backed <rel> ...] [--generated <rel> ...]
+```
+
+`mount`/`unmount` need root - they act on someone else's `$HOME`. `status`/`commit` only
+read `/run/nyth/<name>/upper`, which `mount` leaves readable/writable by its owner, so those run
+fine as a normal user, no `sudo`.
+
+The Home Manager module reads your `home.file` the same way Home Manager itself already does,
+and wires up two commands you run by hand:
 
 ```nix
 {
@@ -51,25 +66,38 @@ the same way Home Manager itself already does, and generates a wrapper with ever
 }
 ```
 
-The NixOS module is one line:
+```
+nyth-status
+nyth-commit
+```
+
+They work on whatever's in the overlay right now - you can run either one anytime, mount active
+or not, since the record of what changed lives in `/run/nyth/<name>/upper` on purpose,
+independent of the overlay's own lifecycle.
+
+## Mounting at boot
+
+Something has to call `nyth mount --for-user <name>` when the system starts (or at first login,
+if you'd rather do it lazily :P). That something is unavoidably tied to your init system, and nyth
+deliberately doesn't provide it - a project that generates systemd/finit units to trigger its own
+binary would itself depend on a particular init system, exactly what nyth avoids everywhere else.
+Instead, the Home Manager module writes the flags `nyth mount` needs to
+`~/.local/state/nyth/mount-args`, and you write your own unit that reads that file. On systemd:
 
 ```nix
-{
-  inputs.nyth.url = "github:FixeQD/nyth";
-  imports = [ nyth.nixosModules.default ];
-  programs.nyth.enable = true;
-}
+# in your own NixOS config, NOT in the nyth flake - this is your integration, not nyth's
+systemd.services."nyth-mount-user" = {
+  description = "nyth write-through overlay for user";
+  wantedBy = [ "multi-user.target" ];
+  after = [ "local-fs.target" ];
+  serviceConfig = {
+    Type = "oneshot";
+    RemainAfterExit = true;
+    ExecStart = "/bin/sh -c 'exec ${pkgs.nyth}/bin/nyth mount --for-user user $(cat /home/user/.local/state/nyth/mount-args)'";
+    ExecStop = "${pkgs.nyth}/bin/nyth unmount --for-user user";
+  };
+};
 ```
 
-With both in place, you never run `session` yourself - the NixOS module opens it at login
-through `/etc/profile.d/nyth.sh`, before your display manager or WM autostart, so they inherit
-the overlay instead of starting fresh. `status` and `commit` are the only things you run by
-hand:
-
-```
-nyth-shell status
-nyth-shell commit
-```
-
-They work on whatever's left behind in the overlay - you can run either one anytime, session
-active or not, since the record of what changed lives outside the namespace on purpose.
+Swap in the equivalent finit task, a manual `sudo nyth mount ...`, a cron job - nyth genuinely
+doesn't care. It never checks who or what invoked it; it takes argv, makes syscalls and exits

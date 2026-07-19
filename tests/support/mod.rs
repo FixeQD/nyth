@@ -5,12 +5,13 @@ use nyth::sys::paths::NythPaths;
 
 /// A throwaway directory under /tmp, torn down when it goes out of scope
 /// (even on panic, unlike a manual `remove_dir_all` at the end of a test).
-/// For tests that need plain file I/O (commit/status) with no mounting or
-/// namespaces involved.
+/// For tests that need plain file I/O (commit/status) with no mounting involved
+#[allow(dead_code)]
 pub struct Workspace {
     pub root: PathBuf,
 }
 
+#[allow(dead_code)]
 impl Workspace {
     /// `name` only has to be unique within one test *binary* (commit.rs,
     /// status.rs, etc. are separate processes, so reusing a name across
@@ -30,14 +31,15 @@ impl Workspace {
         fs::write(path, contents).expect("write workspace file");
     }
 
-    /// A full NythPaths layout rooted in this workspace, for tests
-    /// exercising `commit_into`/`nyth_status`, which need upper/work too.
+    /// A full `NythPaths` layout rooted in this workspace, for tests exercising `commit_into`/`nyth_status`, which need `upper`/`work` too
     pub fn paths(&self) -> NythPaths {
+        let root = self.root.join("state");
         NythPaths {
-            lower: self.root.join("state/lower"),
-            upper: self.root.join("state/upper"),
-            work: self.root.join("state/work"),
-            root: self.root.join("state"),
+            lower: root.join("lower"),
+            home_snapshot: root.join("home-snapshot"),
+            upper: root.join("upper"),
+            work: root.join("work"),
+            root,
         }
     }
 }
@@ -51,11 +53,9 @@ impl Drop for Workspace {
 /// Forks, runs `child_fn` in the child (must return an exit code, 0 meaning
 /// success), and asserts the child exited with code 0.
 ///
-/// Every test that calls a real `unshare()` needs this: `unshare(CLONE_NEWUSER)`
-/// returns EINVAL if the calling process is multithreaded, which it always is
-/// under cargo test's own harness, regardless of `--test-threads`. A freshly
-/// forked child is always single-threaded no matter how busy the parent was,
-/// so it's the only way to exercise `enter_isolated_session` at all here.
+/// Used by tests that need a fresh, single-threaded process to safely call
+/// root-only syscalls (mount/unmount/chown) without disturbing the rest of
+/// the test harness.
 ///
 /// `child_fn` never returns to the caller on the success path: the child
 /// exits from inside this function, not back in the test.

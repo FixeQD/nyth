@@ -51,48 +51,35 @@ let
   watchedPathArgs = lib.concatMapStringsSep " "
     (path: "--watched-path ${lib.escapeShellArg path}")
     watchedPaths;
-
   repoBackedArgs = lib.concatMapStringsSep " "
     (path: "--repo-backed ${lib.escapeShellArg path}")
     repoBackedPaths;
-
   generatedArgs = lib.concatMapStringsSep " "
     (path: "--generated ${lib.escapeShellArg path}")
     generatedPaths;
 
-  envArgs = lib.concatStringsSep " "
-    (lib.mapAttrsToList
-      (name: value: "--env ${lib.escapeShellArg "${name}=${toString value}"}")
-      config.home.sessionVariables);
-
-  nythShell = pkgs.writeShellApplication {
-    name = "nyth-shell";
+  nythStatusCmd = pkgs.writeShellApplication {
+    name = "nyth-status";
     runtimeInputs = [ cfg.package ];
     text = ''
-      cmd="''${1:-}"
-      case "$cmd" in
-        session)
-          shift
-          exec nyth session ${watchedPathArgs} ${envArgs} "$@"
-          ;;
-        status|commit)
-          shift
-          exec nyth "$cmd" \
-            --repo-root ${lib.escapeShellArg cfg.dotfilesRepo} \
-            ${repoBackedArgs} ${generatedArgs} \
-            "$@"
-          ;;
-        *)
-          echo "usage: nyth-shell <session [-- <command>] | status | commit>" >&2
-          exit 1
-          ;;
-      esac
+      exec nyth status --for-user ${lib.escapeShellArg config.home.username} \
+        --repo-root ${lib.escapeShellArg cfg.dotfilesRepo} \
+        ${repoBackedArgs} ${generatedArgs} "$@"
+    '';
+  };
+  nythCommitCmd = pkgs.writeShellApplication {
+    name = "nyth-commit";
+    runtimeInputs = [ cfg.package ];
+    text = ''
+      exec nyth commit --for-user ${lib.escapeShellArg config.home.username} \
+        --repo-root ${lib.escapeShellArg cfg.dotfilesRepo} \
+        ${repoBackedArgs} ${generatedArgs} "$@"
     '';
   };
 in
 {
   options.programs.nyth = {
-    enable = lib.mkEnableOption "write-through OverlayFS session over $HOME managed by Home Manager";
+    enable = lib.mkEnableOption "write-through OverlayFS nad $HOME zarządzanym przez Home Managera";
 
     package = lib.mkOption {
       type = lib.types.package;
@@ -105,13 +92,14 @@ in
       type = lib.types.str;
       description = ''
         Absolute path to the local, on-disk checkout of your flake's dotfiles repo where `nyth commit` writes repo-backed changes back to.
-        Nyth hasno way to derive this from the flake evaluation itself, since that only ever sees paths already copied into the store
+        Nyth has no way to derive this from the flake evaluation itself, since that only ever sees paths already copied into the store.
       '';
-      example = "/home/pawel/nixos-config";
+      example = "/home/user/nixos-config";
     };
   };
 
   config = lib.mkIf cfg.enable {
-    home.packages = [ nythShell ];
+    home.packages = [ nythStatusCmd nythCommitCmd ];
+    home.file.".local/state/nyth/mount-args".text = watchedPathArgs;
   };
 }

@@ -1,9 +1,9 @@
 use std::path::{Path, PathBuf};
 
-use crate::cli::status::{DotfilesRepo, PendingChange, nyth_status};
+use crate::cli::status::{DotfilesRepo, PendingChange, RepoArgs, nyth_status};
 use crate::config::RelativeHomePath;
 use crate::error::{NotCommittableReason, NythError};
-use crate::sys::paths::{NythPaths, resolve_identity_and_paths};
+use crate::sys::paths::NythPaths;
 
 /// Which pending changes `nyth commit` should actually write back to the repo
 #[derive(Debug, Clone)]
@@ -39,11 +39,12 @@ pub fn select_changes_to_apply(
         .collect()
 }
 
-/// Resolves the caller's identity-scoped paths for real, then commits.
-/// Thin wrapper around `commit_into`, same split as `session`
-pub fn commit(repo: &DotfilesRepo) -> Result<CommitReport, NythError> {
-    let (_, paths) = resolve_identity_and_paths()?;
-    commit_into(repo, &paths)
+/// Builds identity-scoped paths and the repo from `--for-user`/`--repo-*` args, then commits
+/// Thin wrapper around `commit_into`.
+pub fn commit(args: &RepoArgs) -> Result<CommitReport, NythError> {
+    let paths = args.paths();
+    let repo = args.clone().into_repo();
+    commit_into(&repo, &paths)
 }
 
 pub fn commit_into(repo: &DotfilesRepo, paths: &NythPaths) -> Result<CommitReport, NythError> {

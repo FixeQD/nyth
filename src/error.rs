@@ -2,81 +2,70 @@ use std::fmt;
 use std::path::PathBuf;
 
 #[derive(Debug)]
-pub enum NamespaceError {
-    UnshareFailed { errno: i32 },
-    UserNamespacesDisabled,
-    SetgroupsWriteFailed { errno: i32 },
-    UidMapWriteFailed { errno: i32 },
-    MountPropagationFailed { errno: i32 },
-    HomeLookupFailed { uid: u32, errno: i32 },
+pub enum IdentityError {
+    /// `geteuid() != 0` - checked first, before any mount attempt
+    NotRunningAsRoot,
+    /// `getpwnam_r` for `--for-user <name>` found no entry.
+    UserNotFound {
+        name: String,
+    },
+    HomeLookupFailed {
+        name: String,
+        errno: i32,
+    },
 }
 
-impl fmt::Display for NamespaceError {
+impl fmt::Display for IdentityError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UnshareFailed { errno } => {
-                write!(f, "failed to unshare user/mount namespaces (errno {errno})")
-            }
-            Self::UserNamespacesDisabled => write!(
+            Self::NotRunningAsRoot => write!(
                 f,
-                "user namespaces are disabled (check security.allowUserNamespaces or a hardened kernel profile)"
+                "nyth must run as root: mount/unmount act on another user's $HOME and need CAP_SYS_ADMIN on the host, there is no user namespace to fall back to"
             ),
-            Self::SetgroupsWriteFailed { errno } => {
-                write!(f, "failed to write /proc/self/setgroups (errno {errno})")
+            Self::UserNotFound { name } => {
+                write!(f, "no passwd entry found for user '{name}'")
             }
-            Self::UidMapWriteFailed { errno } => {
-                write!(f, "failed to write uid/gid map (errno {errno})")
-            }
-            Self::MountPropagationFailed { errno } => {
-                write!(f, "failed to make mount tree private (errno {errno})")
-            }
-            Self::HomeLookupFailed { uid, errno: 0 } => {
-                write!(f, "no passwd entry found for uid {uid}")
-            }
-            Self::HomeLookupFailed { uid, errno } => {
-                write!(
-                    f,
-                    "failed to look up home directory for uid {uid} (errno {errno})"
-                )
-            }
+            Self::HomeLookupFailed { name, errno } => write!(
+                f,
+                "failed to look up passwd entry for '{name}' (errno {errno})"
+            ),
         }
     }
 }
 
-impl std::error::Error for NamespaceError {}
+impl std::error::Error for IdentityError {}
 
 #[derive(Debug)]
 pub enum OverlayError {
-    ScratchDirCreateFailed { errno: i32 },
-    ScratchTmpfsMountFailed { errno: i32 },
-    ScratchSubdirFailed { path: PathBuf, errno: i32 },
+    AlreadyMounted { user: String },
+    NotMounted { user: String },
+    PersistentTmpfsFailed { errno: i32 },
     HomeSnapshotFailed { errno: i32 },
     WatchedPathUnresolved { path: PathBuf, errno: i32 },
     OverlayApiUnsupported { errno: i32 },
     MountFailed { target: PathBuf, errno: i32 },
+    UnmountFailed { target: PathBuf, errno: i32 },
+    OwnershipFailed { path: PathBuf, errno: i32 },
+    StateCheckFailed { message: String },
 }
 
 impl fmt::Display for OverlayError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ScratchDirCreateFailed { errno } => {
-                write!(
-                    f,
-                    "failed to create scratch tmpfs directory (errno {errno})"
-                )
+            Self::AlreadyMounted { user } => {
+                write!(f, "nyth is already mounted for user '{user}'")
             }
-            Self::ScratchTmpfsMountFailed { errno } => {
-                write!(f, "failed to mount scratch tmpfs (errno {errno})")
+            Self::NotMounted { user } => {
+                write!(f, "nyth is not mounted for user '{user}'")
             }
-            Self::ScratchSubdirFailed { path, errno } => {
-                write!(f, "failed to create {} (errno {errno})", path.display())
-            }
-            Self::HomeSnapshotFailed { errno } => {
-                write!(
-                    f,
-                    "failed to create read-only home snapshot (errno {errno})"
-                )
-            }
+            Self::PersistentTmpfsFailed { errno } => write!(
+                f,
+                "failed to set up /run/nyth/<user> persistent tmpfs (errno {errno})"
+            ),
+            Self::HomeSnapshotFailed { errno } => write!(
+                f,
+                "failed to create read-only home snapshot (errno {errno})"
+            ),
             Self::WatchedPathUnresolved { path, errno } => write!(
                 f,
                 "failed to resolve watched path {} to its real /nix/store target (errno {errno})",
@@ -92,6 +81,17 @@ impl fmt::Display for OverlayError {
                     "failed to mount overlay at {} (errno {errno})",
                     target.display()
                 )
+            }
+            Self::UnmountFailed { target, errno } => {
+                write!(f, "failed to unmount {} (errno {errno})", target.display())
+            }
+            Self::OwnershipFailed { path, errno } => write!(
+                f,
+                "failed to set ownership of {} (errno {errno})",
+                path.display()
+            ),
+            Self::StateCheckFailed { message } => {
+                write!(f, "failed to check overlay state: {message}")
             }
         }
     }
@@ -110,10 +110,13 @@ pub enum NotCommittableReason {
 
 #[derive(Debug)]
 pub enum NythError {
-    Namespace(NamespaceError),
+    Identity(IdentityError),
     Overlay(OverlayError),
     Status(StatusError),
-    SessionIoFailed {
+    WatchedPathEscapesHome {
+        path: PathBuf,
+    },
+    MountIoFailed {
         path: PathBuf,
         message: String,
     },
@@ -125,21 +128,19 @@ pub enum NythError {
         path: PathBuf,
         reason: NotCommittableReason,
     },
-    ExecFailed {
-        program: String,
-        message: String,
-    },
-    NoTargetCommand,
 }
 
 impl fmt::Display for NythError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Namespace(e) => write!(f, "{e}"),
+            Self::Identity(e) => write!(f, "{e}"),
             Self::Overlay(e) => write!(f, "{e}"),
             Self::Status(e) => write!(f, "{e}"),
-            Self::SessionIoFailed { path, message } => {
-                write!(f, "session setup failed at {}: {message}", path.display())
+            Self::WatchedPathEscapesHome { path } => {
+                write!(f, "watched path {} escapes $HOME", path.display())
+            }
+            Self::MountIoFailed { path, message } => {
+                write!(f, "mount setup failed at {}: {message}", path.display())
             }
             Self::CommitIoFailed { path, message } => {
                 write!(f, "commit failed at {}: {message}", path.display())
@@ -160,10 +161,6 @@ impl fmt::Display for NythError {
                 "{} is not managed by Home Manager, cannot commit an untracked path",
                 path.display()
             ),
-            Self::ExecFailed { program, message } => {
-                write!(f, "failed to exec '{program}': {message}")
-            }
-            Self::NoTargetCommand => write!(f, "no command given to run inside the session"),
         }
     }
 }
@@ -171,7 +168,7 @@ impl fmt::Display for NythError {
 impl std::error::Error for NythError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Namespace(e) => Some(e),
+            Self::Identity(e) => Some(e),
             Self::Overlay(e) => Some(e),
             Self::Status(e) => Some(e),
             _ => None,

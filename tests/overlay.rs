@@ -1,193 +1,186 @@
+mod support;
+
+use std::ffi::CString;
 use std::fs;
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::symlink;
-use std::process::exit;
+use std::path::Path;
 
 use nyth::config::RelativeHomePath;
-use nyth::error::NamespaceError;
-use nyth::sys::namespace::{CallerIdentity, enter_isolated_session};
+use nyth::error::OverlayError;
 use nyth::sys::overlay::{
-    ScratchTmpfs, mount_overlay, provision_scratch_tmpfs, resolve_watched_paths,
+    mount_overlay, provision_persistent_tmpfs, resolve_watched_paths, unmount_persistent_tmpfs,
 };
+use nyth::sys::paths::NythPaths;
+
+/// EPERM/EACCES on the very first root-only step (creating/mounting `/run/nyth/<name>`) means this process isn't running as real root - expected outside a CI container running as root
+fn is_permission_denied(errno: i32) -> bool {
+    errno == libc::EPERM || errno == libc::EACCES
+}
+
+fn umount_path(path: &Path) {
+    let c = CString::new(path.as_os_str().as_bytes()).expect("path has no interior NUL");
+    unsafe {
+        libc::umount2(c.as_ptr(), 0);
+    }
+}
 
 #[test]
 fn mount_overlay_merges_lower_and_allows_writes() {
-    let identity = CallerIdentity::from_current_process().expect("syscalls don't fail");
-
-    match unsafe { libc::fork() } {
-        -1 => panic!("fork failed"),
-        0 => exit(run_in_child(&identity)),
-        child_pid => {
-            let mut status = 0;
-            unsafe { libc::waitpid(child_pid, &mut status, 0) };
-            assert!(libc::WIFEXITED(status), "child did not exit normally");
-            assert_eq!(
-                libc::WEXITSTATUS(status),
-                0,
-                "see child stderr above for which step failed"
-            );
-        }
-    }
+    support::run_in_fork(run_in_child);
 }
-fn run_in_child(identity: &CallerIdentity) -> i32 {
-    match enter_isolated_session(identity.uid, identity.gid) {
-        Ok(_) => {}
-        Err(NamespaceError::UserNamespacesDisabled) => return 0,
-        Err(e) => {
-            eprintln!("enter_isolated_session failed: {e:?}");
-            return 1;
+
+fn run_in_child() -> i32 {
+    let name = format!("nyth-test-overlay-{}", std::process::id());
+    let paths = NythPaths::for_user(&name);
+
+    if let Err(e) = provision_persistent_tmpfs(&paths) {
+        if let OverlayError::PersistentTmpfsFailed { errno } = e {
+            if is_permission_denied(errno) {
+                return 0;
+            }
         }
+        eprintln!("provision_persistent_tmpfs failed: {e:?}");
+        return 1;
     }
 
-    let scratch = match provision_scratch_tmpfs(identity) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("provision_scratch_tmpfs failed: {e:?}");
-            return 2;
-        }
-    };
-
-    // Not the real NythPaths::lower (that's identity.home-scoped and persistent), just a throwaway dir for this test
-    let target = scratch.root.join("target");
-    let lower = scratch.root.join("test-lower");
-    let upper = scratch.root.join("test-upper");
-    let work = scratch.root.join("test-work");
-    for dir in [&target, &lower, &upper, &work] {
-        if fs::create_dir(dir).is_err() {
-            eprintln!("create test dir failed: {}", dir.display());
-            return 3;
-        }
-    }
-
-    if let Err(e) = fs::write(lower.join("testfile"), b"from-lower") {
+    if let Err(e) = fs::write(paths.lower.join("testfile"), b"from-lower") {
         eprintln!("seed lowerdir failed: {e}");
+        let _ = unmount_persistent_tmpfs(&paths);
+        return 2;
+    }
+
+    let target =
+        std::env::temp_dir().join(format!("nyth-test-overlay-target-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&target);
+    if fs::create_dir_all(&target).is_err() {
+        eprintln!("create target dir failed");
+        let _ = unmount_persistent_tmpfs(&paths);
+        return 3;
+    }
+
+    if let Err(e) = mount_overlay(&paths, &target) {
+        eprintln!("mount_overlay failed: {e:?}");
+        let _ = unmount_persistent_tmpfs(&paths);
+        let _ = fs::remove_dir_all(&target);
         return 4;
     }
 
-    if let Err(e) = mount_overlay(&lower, &upper, &work, &scratch, &target) {
-        eprintln!("mount_overlay failed: {e:?}");
-        return 5;
-    }
+    let result = check_overlay_contents(&target, &paths.upper);
 
+    umount_path(&target);
+    let _ = unmount_persistent_tmpfs(&paths);
+    let _ = fs::remove_dir_all(&target);
+
+    result
+}
+
+fn check_overlay_contents(target: &Path, upper: &Path) -> i32 {
     let seen = match fs::read(target.join("testfile")) {
         Ok(bytes) => bytes,
         Err(e) => {
             eprintln!("reading through overlay failed: {e}");
-            return 6;
+            return 5;
         }
     };
     if seen != b"from-lower" {
         eprintln!("lowerdir content did not surface through overlay");
+        return 6;
+    }
+
+    if let Err(e) = fs::write(target.join("newfile"), b"from-mount") {
+        eprintln!("write through overlay failed: {e}");
         return 7;
     }
 
-    if let Err(e) = fs::write(target.join("newfile"), b"from-session") {
-        eprintln!("write through overlay failed: {e}");
-        return 8;
-    }
-
     match fs::read(upper.join("newfile")) {
-        Ok(bytes) if bytes == b"from-session" => 0,
+        Ok(bytes) if bytes == b"from-mount" => 0,
         Ok(_) => {
             eprintln!("upperdir file had unexpected content");
-            9
+            8
         }
         Err(e) => {
             eprintln!("write did not land in upperdir: {e}");
-            10
+            9
         }
     }
 }
 
 #[test]
 fn resolve_watched_paths_binds_dereferenced_store_target_not_the_symlink() {
-    let identity = CallerIdentity::from_current_process().expect("syscalls don't fail");
-
-    match unsafe { libc::fork() } {
-        -1 => panic!("fork failed"),
-        0 => exit(run_resolve_in_child(&identity)),
-        child_pid => {
-            let mut status = 0;
-            unsafe { libc::waitpid(child_pid, &mut status, 0) };
-            assert!(libc::WIFEXITED(status), "child did not exit normally");
-            assert_eq!(
-                libc::WEXITSTATUS(status),
-                0,
-                "see child stderr above for which step failed"
-            );
-        }
-    }
+    support::run_in_fork(run_resolve_in_child);
 }
 
-fn run_resolve_in_child(identity: &CallerIdentity) -> i32 {
-    match enter_isolated_session(identity.uid, identity.gid) {
-        Ok(_) => {}
-        Err(NamespaceError::UserNamespacesDisabled) => return 0,
-        Err(e) => {
-            eprintln!("enter_isolated_session failed: {e:?}");
-            return 1;
+fn run_resolve_in_child() -> i32 {
+    let name = format!("nyth-test-watched-{}", std::process::id());
+    let paths = NythPaths::for_user(&name);
+
+    if let Err(e) = provision_persistent_tmpfs(&paths) {
+        if let OverlayError::PersistentTmpfsFailed { errno } = e {
+            if is_permission_denied(errno) {
+                return 0;
+            }
         }
+        eprintln!("provision_persistent_tmpfs failed: {e:?}");
+        return 1;
     }
 
-    let root = std::env::temp_dir().join(format!("nyth-watched-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
-    let home_snapshot = root.join("home-snapshot");
-    let lower = root.join("lower");
     // Stands in for a real /nix/store output: a plain, read-only file HM's symlink points at
-    let fake_store_target = root.join("fake-store-gitconfig");
-
-    if fs::create_dir_all(&home_snapshot).is_err() || fs::create_dir_all(&lower).is_err() {
-        eprintln!("failed to set up test dirs");
-        return 2;
-    }
+    let fake_store_target = paths.root.join("fake-store-gitconfig");
     if fs::write(&fake_store_target, b"from-nix-store").is_err() {
         eprintln!("failed to seed fake store file");
-        return 3;
+        let _ = unmount_persistent_tmpfs(&paths);
+        return 2;
     }
     // What Home Manager actually leaves in $HOME: an absolute symlink into the store
-    if symlink(&fake_store_target, home_snapshot.join(".gitconfig")).is_err() {
+    if symlink(&fake_store_target, paths.home_snapshot.join(".gitconfig")).is_err() {
         eprintln!("failed to create symlink the way home-manager would");
-        return 4;
+        let _ = unmount_persistent_tmpfs(&paths);
+        return 3;
     }
 
-    let scratch = ScratchTmpfs {
-        root: root.clone(),
-        home_snapshot,
-    };
     let watched = match RelativeHomePath::new(".gitconfig") {
         Ok(path) => path,
         Err(e) => {
             eprintln!("RelativeHomePath::new failed: {e}");
-            return 5;
+            let _ = unmount_persistent_tmpfs(&paths);
+            return 4;
         }
     };
 
-    if let Err(e) = resolve_watched_paths(&scratch, &lower, std::slice::from_ref(&watched)) {
+    if let Err(e) = resolve_watched_paths(&paths, std::slice::from_ref(&watched)) {
         eprintln!("resolve_watched_paths failed: {e:?}");
-        return 6;
+        let _ = unmount_persistent_tmpfs(&paths);
+        return 5;
     }
 
-    let lower_entry = lower.join(".gitconfig");
-    let metadata = match fs::symlink_metadata(&lower_entry) {
+    let result = check_lower_entry(&paths.lower.join(".gitconfig"));
+    let _ = unmount_persistent_tmpfs(&paths);
+    result
+}
+
+fn check_lower_entry(lower_entry: &Path) -> i32 {
+    let metadata = match fs::symlink_metadata(lower_entry) {
         Ok(metadata) => metadata,
         Err(e) => {
             eprintln!("stat on lower entry failed: {e}");
-            return 7;
+            return 6;
         }
     };
     if metadata.file_type().is_symlink() {
         eprintln!("lower/.gitconfig is still a symlink - write-through would escape the overlay");
-        return 8;
+        return 7;
     }
 
-    match fs::read(&lower_entry) {
+    match fs::read(lower_entry) {
         Ok(bytes) if bytes == b"from-nix-store" => 0,
         Ok(_) => {
             eprintln!("lower/.gitconfig content did not match the dereferenced store target");
-            9
+            8
         }
         Err(e) => {
             eprintln!("reading through the resolved bind mount failed: {e}");
-            10
+            9
         }
     }
 }

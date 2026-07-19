@@ -1,8 +1,10 @@
-use std::ffi::{CStr, CString, OsString};
+use std::ffi::{CString, OsString};
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::os::fd::OwnedFd;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
-use std::path::{Path, PathBuf};
+use std::os::unix::fs::DirBuilderExt;
+use std::path::Path;
 
 use rustix::fs::CWD;
 use rustix::mount::{
@@ -13,40 +15,75 @@ use rustix::mount::{
 use crate::config::RelativeHomePath;
 use crate::error::OverlayError;
 use crate::sys::errno;
-use crate::sys::namespace::CallerIdentity;
+use crate::sys::paths::NythPaths;
 
-/// Layout:
-/// /tmp/.nyth-<uid>-<suffix>/{home-snapshot,upper,work}
-/// Lives entirely inside the mount namespace from enter_isolated_session, gone once that namespace goes away
-pub struct ScratchTmpfs {
-    pub root: PathBuf,
-    pub home_snapshot: PathBuf,
+/// Whether the overlay is currently mounted over a given target `$HOME`
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverlayState {
+    Mounted,
+    NotMounted,
 }
 
-pub fn provision_scratch_tmpfs(identity: &CallerIdentity) -> Result<ScratchTmpfs, OverlayError> {
-    let root = create_scratch_dir(identity.uid)?;
-    mount_tmpfs(&root)?;
+/// Scans `/proc/self/mountinfo` for a mount point exactly at `home`
+pub fn current_overlay_state(home: &Path) -> Result<OverlayState, OverlayError> {
+    let file =
+        fs::File::open("/proc/self/mountinfo").map_err(|e| OverlayError::StateCheckFailed {
+            message: e.to_string(),
+        })?;
 
-    Ok(ScratchTmpfs {
-        home_snapshot: make_subdir(&root, "home-snapshot")?,
-        root,
-    })
-}
-
-// mkdtemp creates the dir atomically with mode 0700
-fn create_scratch_dir(uid: u32) -> Result<PathBuf, OverlayError> {
-    let template = format!("/tmp/.nyth-{uid}-XXXXXX\0");
-    let mut buf = template.into_bytes();
-
-    let result = unsafe { libc::mkdtemp(buf.as_mut_ptr() as *mut libc::c_char) };
-    if result.is_null() {
-        return Err(OverlayError::ScratchDirCreateFailed { errno: errno() });
+    for line in BufReader::new(file).lines() {
+        let line = line.map_err(|e| OverlayError::StateCheckFailed {
+            message: e.to_string(),
+        })?;
+        // mountinfo(5): "... mount_id parent_id major:minor root mount_point ..."
+        if let Some(mount_point) = line.split_whitespace().nth(4) {
+            if Path::new(mount_point) == home {
+                return Ok(OverlayState::Mounted);
+            }
+        }
     }
+    Ok(OverlayState::NotMounted)
+}
 
-    let path_cstr = unsafe { CStr::from_ptr(buf.as_ptr() as *const libc::c_char) };
-    Ok(PathBuf::from(std::ffi::OsString::from_vec(
-        path_cstr.to_bytes().to_vec(),
-    )))
+/// Sets up `/run/nyth/<name>/` as a persistent, root-owned tmpfs with the 4 subdirectories (`lower/`, `home-snapshot/`, `upper/`, `work/`)
+pub fn provision_persistent_tmpfs(paths: &NythPaths) -> Result<(), OverlayError> {
+    create_root_dir(&paths.root)?;
+    mount_tmpfs(&paths.root)?;
+
+    for dir in [
+        &paths.lower,
+        &paths.home_snapshot,
+        &paths.upper,
+        &paths.work,
+    ] {
+        create_dir_idempotent(dir)?;
+    }
+    Ok(())
+}
+
+fn create_root_dir(root: &Path) -> Result<(), OverlayError> {
+    // `/run/nyth` doesn't necessarily exist yet - recursive() so this doesn't fail with ENOENT the first time it runs on a given machin
+    match fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(root)
+    {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(e) => Err(OverlayError::PersistentTmpfsFailed {
+            errno: e.raw_os_error().unwrap_or(0),
+        }),
+    }
+}
+
+fn create_dir_idempotent(path: &Path) -> Result<(), OverlayError> {
+    match fs::create_dir(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(e) => Err(OverlayError::PersistentTmpfsFailed {
+            errno: e.raw_os_error().unwrap_or(0),
+        }),
+    }
 }
 
 fn mount_tmpfs(path: &Path) -> Result<(), OverlayError> {
@@ -63,31 +100,18 @@ fn mount_tmpfs(path: &Path) -> Result<(), OverlayError> {
         )
     };
     if ret != 0 {
-        return Err(OverlayError::ScratchTmpfsMountFailed { errno: errno() });
+        return Err(OverlayError::PersistentTmpfsFailed { errno: errno() });
     }
     Ok(())
-}
-
-fn make_subdir(root: &Path, name: &str) -> Result<PathBuf, OverlayError> {
-    let path = root.join(name);
-    let ret = unsafe { libc::mkdir(to_cstring(&path).as_ptr(), 0o700) };
-    if ret != 0 {
-        return Err(OverlayError::ScratchSubdirFailed {
-            path,
-            errno: errno(),
-        });
-    }
-    Ok(path)
 }
 
 fn to_cstring(path: impl AsRef<Path>) -> CString {
     CString::new(path.as_ref().as_os_str().as_bytes()).expect("path has no interior NUL")
 }
 
-/// Read-only bind mount of $HOME as it was before the overlay goes on top
-/// Btw without this, mounting the overlay straight onto $HOME would shadow everything outside the configured modules for the whole session
-pub fn mount_home_snapshot(home: &Path, scratch: &ScratchTmpfs) -> Result<(), OverlayError> {
-    bind_mount_readonly(home, &scratch.home_snapshot)
+/// Read-only bind mount of the target's $HOME as it was before the overlay goes on top
+pub fn mount_home_snapshot(home: &Path, paths: &NythPaths) -> Result<(), OverlayError> {
+    bind_mount_readonly(home, &paths.home_snapshot)
         .map_err(|errno| OverlayError::HomeSnapshotFailed { errno })
 }
 
@@ -131,28 +155,26 @@ fn remount_readonly(target: &Path) -> Result<(), i32> {
     Ok(())
 }
 
-/// For each watched path, dereferences the Home Manager-generated symlink at `home_snapshot/<path>` down to its real target in `/nix/store`, then bind-mounts that target read-only at `lower/<path>`
+/// For each watched path, dereferences the Home Manager-generated symlink at `home-snapshot/<path>` down to its real target in `/nix/store`, then bind-mounts that target read-only at `lower/<path>`
 pub fn resolve_watched_paths(
-    scratch: &ScratchTmpfs,
-    lower: &Path,
+    paths: &NythPaths,
     watched_paths: &[RelativeHomePath],
 ) -> Result<(), OverlayError> {
     for path in watched_paths {
-        resolve_one_watched_path(scratch, lower, path)?;
+        resolve_one_watched_path(paths, path)?;
     }
     Ok(())
 }
 
 fn resolve_one_watched_path(
-    scratch: &ScratchTmpfs,
-    lower: &Path,
+    paths: &NythPaths,
     path: &RelativeHomePath,
 ) -> Result<(), OverlayError> {
-    let home_managed_entry = scratch.home_snapshot.join(path.as_path());
+    let home_managed_entry = paths.home_snapshot.join(path.as_path());
     let store_target =
         fs::canonicalize(&home_managed_entry).map_err(|e| watched_path_unresolved(path, &e))?;
 
-    let lower_target = lower.join(path.as_path());
+    let lower_target = paths.lower.join(path.as_path());
     create_bind_mountpoint(&lower_target, &store_target)
         .map_err(|e| watched_path_unresolved(path, &e))?;
 
@@ -177,10 +199,6 @@ fn create_bind_mountpoint(lower_target: &Path, store_target: &Path) -> std::io::
         fs::create_dir_all(parent)?;
     }
 
-    if lower_target.exists() {
-        return Ok(()); // leftover mountpoint from a prior session; bind_mount_readonly redoes the actual mount anyway
-    }
-
     if store_target.is_dir() {
         fs::create_dir(lower_target)
     } else {
@@ -188,19 +206,13 @@ fn create_bind_mountpoint(lower_target: &Path, store_target: &Path) -> std::io::
     }
 }
 
-/// Mounts overlayfs at `target`: lowerdir = `lower` over `scratch.home_snapshot`, upperdir/workdir from `scratch`
-pub fn mount_overlay(
-    lower: &Path,
-    upper: &Path,
-    work: &Path,
-    scratch: &ScratchTmpfs,
-    target: &Path,
-) -> Result<(), OverlayError> {
+/// Mounts overlayfs at `target` (the target user's real $HOME): lowerdir = `paths.lower` over `paths.home_snapshot`, upperdir/workdir from `paths`
+pub fn mount_overlay(paths: &NythPaths, target: &Path) -> Result<(), OverlayError> {
     let fs_fd = open_overlay_fs()?;
 
-    set_lowerdir(&fs_fd, lower, &scratch.home_snapshot)?;
-    set_dir_option(&fs_fd, "upperdir", upper)?;
-    set_dir_option(&fs_fd, "workdir", work)?;
+    set_lowerdir(&fs_fd, &paths.lower, &paths.home_snapshot)?;
+    set_dir_option(&fs_fd, "upperdir", &paths.upper)?;
+    set_dir_option(&fs_fd, "workdir", &paths.work)?;
     fsconfig_create(&fs_fd).map_err(|e| mount_failed(target, e))?;
 
     let mount_fd = fsmount(
@@ -250,4 +262,38 @@ fn mount_failed(target: &Path, e: rustix::io::Errno) -> OverlayError {
         target: target.to_path_buf(),
         errno: e.raw_os_error(),
     }
+}
+
+/// Unmounts the overlay at `target` and the read-only home snapshot underneath it
+pub fn unmount_overlay_and_snapshot(target: &Path, paths: &NythPaths) -> Result<(), OverlayError> {
+    unmount_one(target)?;
+    unmount_one(&paths.home_snapshot)
+}
+
+/// Additionally tears down the persistent tmpfs itself (`nyth unmount --purge`): `upper`/`work` go with it
+pub fn unmount_persistent_tmpfs(paths: &NythPaths) -> Result<(), OverlayError> {
+    unmount_one(&paths.root)
+}
+
+fn unmount_one(target: &Path) -> Result<(), OverlayError> {
+    let ret = unsafe { libc::umount2(to_cstring(target).as_ptr(), 0) };
+    if ret != 0 {
+        return Err(OverlayError::UnmountFailed {
+            target: target.to_path_buf(),
+            errno: errno(),
+        });
+    }
+    Ok(())
+}
+
+/// `chown`s `path` to `uid`/`gid`. `upper`/`work` are created by root but need to be writable by the target user's own processes running inside the overlay
+pub fn set_ownership(path: &Path, uid: u32, gid: u32) -> Result<(), OverlayError> {
+    let ret = unsafe { libc::chown(to_cstring(path).as_ptr(), uid, gid) };
+    if ret != 0 {
+        return Err(OverlayError::OwnershipFailed {
+            path: path.to_path_buf(),
+            errno: errno(),
+        });
+    }
+    Ok(())
 }
