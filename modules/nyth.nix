@@ -49,7 +49,7 @@ let
 
   envArgs = lib.concatStringsSep " "
     (lib.mapAttrsToList
-      (name: value: "--env ${lib.escapeShellArg "${name}=${value}"}")
+      (name: value: "--env ${lib.escapeShellArg "${name}=${toString value}"}")
       config.home.sessionVariables);
 
   nythShell = pkgs.writeShellApplication {
