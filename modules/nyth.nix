@@ -6,12 +6,34 @@ let
 
   # Home Manager already has to know this list to generate the $HOME symlinks in the first place
   allFiles = config.home.file;
-  watchedPaths = builtins.attrNames allFiles;
 
-  isGenerated = _name: fileCfg: fileCfg.text != null;
+  walkRecursiveSource = source: prefix:
+    lib.concatMapAttrs
+      (name: type:
+        let
+          path = source + "/${name}";
+          rel = if prefix == "" then name else "${prefix}/${name}";
+        in
+        if type == "directory" then walkRecursiveSource path rel else { ${rel} = null; }
+      )
+      (builtins.readDir source);
 
-  repoBackedPaths = builtins.attrNames (lib.filterAttrs (n: v: !isGenerated n v) allFiles);
-  generatedPaths = builtins.attrNames (lib.filterAttrs isGenerated allFiles);
+  expandFile = name: fileCfg:
+    if (fileCfg.recursive or false) && fileCfg.source != null then
+      map (rel: "${name}/${rel}") (builtins.attrNames (walkRecursiveSource fileCfg.source ""))
+    else
+      [ name ];
+
+  expanded = lib.mapAttrsToList
+    (name: fileCfg: {
+      paths = expandFile name fileCfg;
+      generated = fileCfg.text != null;
+    })
+    allFiles;
+
+  watchedPaths = lib.concatMap (e: e.paths) expanded;
+  repoBackedPaths = lib.concatMap (e: if e.generated then [ ] else e.paths) expanded;
+  generatedPaths = lib.concatMap (e: if e.generated then e.paths else [ ]) expanded;
 
   watchedPathArgs = lib.concatMapStringsSep " "
     (path: "--watched-path ${lib.escapeShellArg path}")
