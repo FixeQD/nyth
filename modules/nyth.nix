@@ -38,7 +38,7 @@ let
       case "$cmd" in
         session)
           shift
-          exec nyth session ${watchedPathArgs} ${envArgs} -- "$@"
+          exec nyth session ${watchedPathArgs} ${envArgs} "$@"
           ;;
         status|commit)
           shift
@@ -48,7 +48,7 @@ let
             "$@"
           ;;
         *)
-          echo "usage: nyth-shell <session -- <command> | status | commit>" >&2
+          echo "usage: nyth-shell <session [-- <command>] | status | commit>" >&2
           exit 1
           ;;
       esac

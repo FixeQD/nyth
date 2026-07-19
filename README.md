@@ -14,10 +14,11 @@ you told it.
 
 ## The session
 
-nyth doesn't patch the apps or Home Manager. It opens a mount namespace with an overlayfs write
-layer on top of your real `$HOME`, and runs your command inside it. Every managed config looks
-ordinary and writable for as long as that command runs. When it ends, the namespace is gone -
-outside it, nothing ever changed. What's left behind is a diff of whatever got written.
+Nyth doesn't patch the apps or Home Manager. It opens a mount namespace with an overlayfs write
+layer on top of your real `$HOME`, and runs inside it - your login shell, so everything you do
+for the rest of that login lives inside the same overlay. Every managed config looks ordinary
+and writable the whole time. When the namespace ends, so does the overlay - outside it, nothing
+ever changed. What's left behind is a diff of whatever got written.
 
 ## Status and commit
 
@@ -52,14 +53,25 @@ the same way Home Manager itself already does, and generates a wrapper with ever
 }
 ```
 
-After that, `nyth-shell` is just a command:
+The NixOS module is one line:
+
+```nix
+{
+  inputs.nyth.url = "github:FixeQD/nyth";
+  imports = [ nyth.nixosModules.default ];
+  programs.nyth.enable = true;
+}
+```
+
+With both in place, you never run `session` yourself - the NixOS module opens it at login
+through `/etc/profile.d/nyth.sh`, before your display manager or WM autostart, so they inherit
+the overlay instead of starting fresh. `status` and `commit` are the only things you run by
+hand:
 
 ```
-nyth-shell session -- hyprctl reload
 nyth-shell status
 nyth-shell commit
 ```
 
-`session` runs whatever you pass it inside the write-through namespace. `status` and `commit`
-work on whatever's left behind afterward - you can run either one anytime, session active or
-not, since the record of what changed lives outside the namespace on purpose.
+They work on whatever's left behind in the overlay - you can run either one anytime, session
+active or not, since the record of what changed lives outside the namespace on purpose.

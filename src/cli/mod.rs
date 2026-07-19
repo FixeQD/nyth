@@ -44,7 +44,7 @@ fn run_session_cmd(args: &[String]) -> ExitCode {
     let error = run_session(
         &session_args.watched_paths,
         &session_args.env_overrides,
-        &session_args.target_command,
+        session_args.target_command.as_deref(),
     );
     eprintln!("nyth session failed: {error}");
     ExitCode::FAILURE

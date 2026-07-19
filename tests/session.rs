@@ -2,6 +2,7 @@ mod support;
 
 use std::fs;
 use std::os::unix::fs::symlink;
+use std::path::PathBuf;
 
 use nyth::cli::session::run_session_with;
 use nyth::config::RelativeHomePath;
@@ -38,6 +39,7 @@ fn run_in_child(real_identity: &CallerIdentity) -> i32 {
         uid: real_identity.uid,
         gid: real_identity.gid,
         home: fake_home.clone(),
+        shell: PathBuf::from("/bin/sh"),
     };
     let paths = ws.paths();
     let watched = match RelativeHomePath::new(".gitconfig") {
@@ -64,13 +66,57 @@ fn run_in_child(real_identity: &CallerIdentity) -> i32 {
     let error = run_session_with(
         std::slice::from_ref(&watched),
         &[],
-        &target_command,
+        Some(&target_command),
         &identity,
         &paths,
     );
 
     if let NythError::Namespace(NamespaceError::UserNamespacesDisabled) = error {
         // Same as tests/namespace.rs and tests/overlay.rs: environment-dependent
+        return 0;
+    }
+
+    eprintln!("run_session_with returned without a successful exec: {error}");
+    99
+}
+
+#[test]
+fn run_session_falls_back_to_login_shell_when_no_command_given() {
+    let real_identity = CallerIdentity::from_current_process().expect("syscalls don't fail");
+    support::run_in_fork(|| run_default_shell_in_child(&real_identity));
+}
+
+fn run_default_shell_in_child(real_identity: &CallerIdentity) -> i32 {
+    let ws = Workspace::new("session-default-shell");
+    let fake_home = ws.root.join("home");
+    if fs::create_dir_all(&fake_home).is_err() {
+        eprintln!("create fake home failed");
+        return 1;
+    }
+
+    let devnull = match std::fs::File::open("/dev/null") {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("open /dev/null failed: {e}");
+            return 4;
+        }
+    };
+    if unsafe { libc::dup2(std::os::unix::io::AsRawFd::as_raw_fd(&devnull), 0) } == -1 {
+        eprintln!("dup2 stdin to /dev/null failed");
+        return 5;
+    }
+
+    let identity = CallerIdentity {
+        uid: real_identity.uid,
+        gid: real_identity.gid,
+        home: fake_home,
+        shell: PathBuf::from("/bin/sh"),
+    };
+    let paths = ws.paths();
+
+    let error = run_session_with(&[], &[], None, &identity, &paths);
+
+    if let NythError::Namespace(NamespaceError::UserNamespacesDisabled) = error {
         return 0;
     }
 

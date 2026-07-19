@@ -39,6 +39,8 @@
 
       homeManagerModules.default = import ./modules/nyth.nix { inherit self; };
 
+      nixosModules.default = import ./modules/nyth-nixos.nix;
+
       devShells = forAllSystems (system:
         let
           pkgs = pkgsFor system;

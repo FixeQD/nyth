@@ -13,19 +13,25 @@ pub struct CallerIdentity {
     pub uid: u32,
     pub gid: u32,
     pub home: PathBuf,
+    pub shell: PathBuf,
 }
 
 impl CallerIdentity {
     pub fn from_current_process() -> Result<Self, NamespaceError> {
         let uid = unsafe { libc::getuid() };
         let gid = unsafe { libc::getgid() };
-        let home = home_dir_for(uid)?;
-        Ok(Self { uid, gid, home })
+        let (home, shell) = passwd_entry_for(uid)?;
+        Ok(Self {
+            uid,
+            gid,
+            home,
+            shell,
+        })
     }
 }
 
-/// Looks up the home directory for `uid` via getpwuid_r, retrying with a larger buffer on ERANGE
-fn home_dir_for(uid: u32) -> Result<PathBuf, NamespaceError> {
+/// Looks up `pw_dir`/`pw_shell` for `uid` via getpwuid_r, retrying with a larger buffer on ERANGE
+fn passwd_entry_for(uid: u32) -> Result<(PathBuf, PathBuf), NamespaceError> {
     let mut buf_len: usize = 1024;
 
     loop {
@@ -50,7 +56,11 @@ fn home_dir_for(uid: u32) -> Result<PathBuf, NamespaceError> {
             }
 
             let home_cstr = unsafe { CStr::from_ptr(pwd.pw_dir) };
-            return Ok(PathBuf::from(home_cstr.to_string_lossy().into_owned()));
+            let shell_cstr = unsafe { CStr::from_ptr(pwd.pw_shell) };
+            return Ok((
+                PathBuf::from(home_cstr.to_string_lossy().into_owned()),
+                PathBuf::from(shell_cstr.to_string_lossy().into_owned()),
+            ));
         }
 
         if ret == libc::ERANGE {
