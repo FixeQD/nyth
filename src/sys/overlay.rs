@@ -49,7 +49,7 @@ fn create_scratch_dir(uid: u32) -> Result<PathBuf, OverlayError> {
     )))
 }
 
-fn mount_tmpfs(path: &PathBuf) -> Result<(), OverlayError> {
+fn mount_tmpfs(path: &Path) -> Result<(), OverlayError> {
     let target = to_cstring(path);
     let fstype = c"tmpfs";
 
@@ -68,7 +68,7 @@ fn mount_tmpfs(path: &PathBuf) -> Result<(), OverlayError> {
     Ok(())
 }
 
-fn make_subdir(root: &PathBuf, name: &str) -> Result<PathBuf, OverlayError> {
+fn make_subdir(root: &Path, name: &str) -> Result<PathBuf, OverlayError> {
     let path = root.join(name);
     let ret = unsafe { libc::mkdir(to_cstring(&path).as_ptr(), 0o700) };
     if ret != 0 {

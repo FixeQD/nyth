@@ -24,7 +24,7 @@ pub fn diff_generated_config(before: &str, after: &str) -> Vec<LineDiff> {
 }
 
 enum RawOp<'a> {
-    Equal(&'a str),
+    Equal,
     Removed(&'a str),
     Added(&'a str),
 }
@@ -47,7 +47,7 @@ fn line_diff_ops<'a>(before: &[&'a str], after: &[&'a str]) -> Vec<RawOp<'a>> {
     let (mut i, mut j) = (0, 0);
     while i < n && j < m {
         if before[i] == after[j] {
-            ops.push(RawOp::Equal(before[i]));
+            ops.push(RawOp::Equal);
             i += 1;
             j += 1;
         } else if lcs[i + 1][j] >= lcs[i][j + 1] {
@@ -75,7 +75,7 @@ fn pair_adjacent_replacements(ops: Vec<RawOp<'_>>) -> Vec<LineDiff> {
 
     while let Some(op) = iter.next() {
         match op {
-            RawOp::Equal(_) => {}
+            RawOp::Equal => {}
             RawOp::Removed(before_line) => {
                 if matches!(iter.peek(), Some(RawOp::Added(_))) {
                     let Some(RawOp::Added(after_line)) = iter.next() else {

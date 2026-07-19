@@ -72,11 +72,8 @@ fn passwd_entry_for(uid: u32) -> Result<(PathBuf, PathBuf), NamespaceError> {
     }
 }
 
-/// A user + mount namespace the caller is running inside of
-pub struct IsolatedSession {
-    uid_map_written: bool,
-    propagation_private: bool,
-}
+/// Proof token: exists only once unshare + id mapping + MS_PRIVATE all succeeded
+pub struct IsolatedSession;
 
 pub fn enter_isolated_session(uid: u32, gid: u32) -> Result<IsolatedSession, NamespaceError> {
     unsafe {
@@ -94,10 +91,7 @@ pub fn enter_isolated_session(uid: u32, gid: u32) -> Result<IsolatedSession, Nam
     write_uid_gid_map(uid, gid)?;
     make_mount_tree_private()?;
 
-    Ok(IsolatedSession {
-        uid_map_written: true,
-        propagation_private: true,
-    })
+    Ok(IsolatedSession)
 }
 
 /// New mount ns inherits parent propagation (MS_SHARED on systemd), so this have to run unconditionally or mounts leak to the host
