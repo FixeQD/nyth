@@ -41,7 +41,7 @@ pub enum OverlayError {
     NotMounted { user: String },
     PersistentTmpfsFailed { errno: i32 },
     HomeSnapshotFailed { errno: i32 },
-    WatchedPathUnresolved { path: PathBuf, errno: i32 },
+    HomeFilesMaterializeFailed { path: PathBuf, errno: i32 },
     OverlayApiUnsupported { errno: i32 },
     MountFailed { target: PathBuf, errno: i32 },
     UnmountFailed { target: PathBuf, errno: i32 },
@@ -66,9 +66,9 @@ impl fmt::Display for OverlayError {
                 f,
                 "failed to create read-only home snapshot (errno {errno})"
             ),
-            Self::WatchedPathUnresolved { path, errno } => write!(
+            Self::HomeFilesMaterializeFailed { path, errno } => write!(
                 f,
-                "failed to resolve watched path {} to its real /nix/store target (errno {errno})",
+                "failed to materialize home-files tree from {} into lower/ (errno {errno})",
                 path.display()
             ),
             Self::OverlayApiUnsupported { errno } => write!(

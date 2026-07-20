@@ -44,13 +44,9 @@ let
       allFiles
   );
 
-  watchedPaths = lib.concatMap (e: e.paths) expanded;
   repoBackedPaths = lib.concatMap (e: if e.generated then [ ] else e.paths) expanded;
   generatedPaths = lib.concatMap (e: if e.generated then e.paths else [ ]) expanded;
 
-  watchedPathArgs = lib.concatMapStringsSep " "
-    (path: "--watched-path ${lib.escapeShellArg path}")
-    watchedPaths;
   repoBackedArgs = lib.concatMapStringsSep " "
     (path: "--repo-backed ${lib.escapeShellArg path}")
     repoBackedPaths;
@@ -100,6 +96,7 @@ in
 
   config = lib.mkIf cfg.enable {
     home.packages = [ nythStatusCmd nythCommitCmd ];
-    home.file.".local/state/nyth/mount-args".text = watchedPathArgs;
+    home.file.".local/state/nyth/mount-args".text =
+      "--home-files ${lib.escapeShellArg config.home-files}";
   };
 }

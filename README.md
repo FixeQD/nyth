@@ -40,7 +40,7 @@ back into an option path is a per-module problem with no general answer.
 Nyth is a plain binary: four independent commands, no config file, no daemon, no idea what init system (if any) called it
 
 ```
-nyth mount   --for-user <name> [--watched-path <rel> ...]
+nyth mount   --for-user <name> --home-files <path>
 nyth unmount --for-user <name> [--purge]
 nyth status  --for-user <name> --repo-root <path> [--repo-backed <rel> ...] [--generated <rel> ...]
 nyth commit  --for-user <name> --repo-root <path> [--repo-backed <rel> ...] [--generated <rel> ...]
@@ -49,6 +49,10 @@ nyth commit  --for-user <name> --repo-root <path> [--repo-backed <rel> ...] [--g
 `mount`/`unmount` need root - they act on someone else's `$HOME`. `status`/`commit` only
 read `/run/nyth/<name>/upper`, which `mount` leaves readable/writable by its owner, so those run
 fine as a normal user, no `sudo`.
+
+`--home-files` is Home Manager's own `home-files` derivation (`config.home-files`) - the exact
+tree Home Manager itself would symlink into `$HOME`. nyth copies it into a private, user-owned
+tmpfs directory rather than bind-mounting straight from `/nix/store`, which is always root-owned and read-only
 
 The Home Manager module reads your `home.file` the same way Home Manager itself already does,
 and wires up two commands you run by hand:

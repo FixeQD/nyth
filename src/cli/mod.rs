@@ -111,7 +111,7 @@ fn run_status(args: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// `Generated` changes are diffed against the target user's *live* $HOME, not the repo
+/// `Generated` changes are diffed against the target user's *live* $HOME (what Home Manager currently has active there), not the repo
 fn print_generated_change(repo_args: &RepoArgs, relative_path: &Path) {
     let home = match TargetIdentity::from_username(&repo_args.for_user) {
         Ok(identity) => identity.home,

@@ -12,7 +12,6 @@ use rustix::mount::{
     fsconfig_set_string, fsmount, fsopen, move_mount,
 };
 
-use crate::config::RelativeHomePath;
 use crate::error::OverlayError;
 use crate::sys::errno;
 use crate::sys::paths::NythPaths;
@@ -155,58 +154,62 @@ fn remount_readonly(target: &Path) -> Result<(), i32> {
     Ok(())
 }
 
-/// For each watched path, dereferences the Home Manager-generated symlink at `home-snapshot/<path>` down to its real target in `/nix/store`, then bind-mounts that target read-only at `lower/<path>`
-pub fn resolve_watched_paths(
+/// Copies Home Manager's fully-merged `home-files` derivation (the same `$out` HM itself would symlink into `$HOME`
+pub fn materialize_home_files(
     paths: &NythPaths,
-    watched_paths: &[RelativeHomePath],
+    home_files: &Path,
+    uid: u32,
+    gid: u32,
 ) -> Result<(), OverlayError> {
-    for path in watched_paths {
-        resolve_one_watched_path(paths, path)?;
+    copy_tree_dereferenced(home_files, &paths.lower).map_err(|e| {
+        OverlayError::HomeFilesMaterializeFailed {
+            path: home_files.to_path_buf(),
+            errno: e.raw_os_error().unwrap_or(0),
+        }
+    })?;
+
+    chown_tree(&paths.lower, uid, gid)
+}
+
+/// Recursively copies `source` into `destination`, following symlinks
+fn copy_tree_dereferenced(source: &Path, destination: &Path) -> std::io::Result<()> {
+    let metadata = fs::metadata(source)?; // follows symlinks, unlike symlink_metadata
+
+    if metadata.is_dir() {
+        fs::create_dir_all(destination)?;
+        for entry in fs::read_dir(source)? {
+            let entry = entry?;
+            copy_tree_dereferenced(&entry.path(), &destination.join(entry.file_name()))?;
+        }
+        Ok(())
+    } else {
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(source, destination).map(|_| ())
+    }
+}
+
+/// `chown`s `path` and, if it's a directory, everything underneath it.
+fn chown_tree(path: &Path, uid: u32, gid: u32) -> Result<(), OverlayError> {
+    set_ownership(path, uid, gid)?;
+
+    if path.is_dir() {
+        let entries = fs::read_dir(path).map_err(|e| OverlayError::OwnershipFailed {
+            path: path.to_path_buf(),
+            errno: e.raw_os_error().unwrap_or(0),
+        })?;
+        for entry in entries {
+            let entry = entry.map_err(|e| OverlayError::OwnershipFailed {
+                path: path.to_path_buf(),
+                errno: e.raw_os_error().unwrap_or(0),
+            })?;
+            chown_tree(&entry.path(), uid, gid)?;
+        }
     }
     Ok(())
 }
 
-fn resolve_one_watched_path(
-    paths: &NythPaths,
-    path: &RelativeHomePath,
-) -> Result<(), OverlayError> {
-    let home_managed_entry = paths.home_snapshot.join(path.as_path());
-    let store_target =
-        fs::canonicalize(&home_managed_entry).map_err(|e| watched_path_unresolved(path, &e))?;
-
-    let lower_target = paths.lower.join(path.as_path());
-    create_bind_mountpoint(&lower_target, &store_target)
-        .map_err(|e| watched_path_unresolved(path, &e))?;
-
-    bind_mount_readonly(&store_target, &lower_target).map_err(|errno| {
-        OverlayError::WatchedPathUnresolved {
-            path: path.as_path().to_path_buf(),
-            errno,
-        }
-    })
-}
-
-fn watched_path_unresolved(path: &RelativeHomePath, e: &std::io::Error) -> OverlayError {
-    OverlayError::WatchedPathUnresolved {
-        path: path.as_path().to_path_buf(),
-        errno: e.raw_os_error().unwrap_or(0),
-    }
-}
-
-/// Bind mount targets must already exist and match the source's type
-fn create_bind_mountpoint(lower_target: &Path, store_target: &Path) -> std::io::Result<()> {
-    if let Some(parent) = lower_target.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    if store_target.is_dir() {
-        fs::create_dir(lower_target)
-    } else {
-        fs::File::create(lower_target).map(|_| ())
-    }
-}
-
-/// Mounts overlayfs at `target` (the target user's real $HOME): lowerdir = `paths.lower` over `paths.home_snapshot`, upperdir/workdir from `paths`
 pub fn mount_overlay(paths: &NythPaths, target: &Path) -> Result<(), OverlayError> {
     let fs_fd = open_overlay_fs()?;
 

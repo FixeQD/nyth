@@ -1,11 +1,11 @@
 use std::fmt;
+use std::path::PathBuf;
 
-use crate::config::{RelativeHomePath, RelativeHomePathError};
 use crate::error::{NythError, OverlayError};
 use crate::sys::identity::{TargetIdentity, require_real_root};
 use crate::sys::overlay::{
-    OverlayState, current_overlay_state, mount_home_snapshot, mount_overlay,
-    provision_persistent_tmpfs, resolve_watched_paths, set_ownership,
+    OverlayState, current_overlay_state, materialize_home_files, mount_home_snapshot,
+    mount_overlay, provision_persistent_tmpfs, set_ownership,
 };
 use crate::sys::paths::NythPaths;
 
@@ -13,22 +13,15 @@ use crate::sys::paths::NythPaths;
 #[derive(Debug, Clone, Default)]
 pub struct MountArgs {
     pub for_user: String,
-    pub watched_paths: Vec<RelativeHomePath>,
+    pub home_files: PathBuf,
 }
 
 #[derive(Debug)]
 pub enum MountArgsError {
-    MissingFlagValue {
-        flag: &'static str,
-    },
+    MissingFlagValue { flag: &'static str },
     MissingForUser,
-    InvalidWatchedPath {
-        raw: String,
-        source: RelativeHomePathError,
-    },
-    UnexpectedArgument {
-        raw: String,
-    },
+    MissingHomeFiles,
+    UnexpectedArgument { raw: String },
 }
 
 impl fmt::Display for MountArgsError {
@@ -36,12 +29,10 @@ impl fmt::Display for MountArgsError {
         match self {
             Self::MissingFlagValue { flag } => write!(f, "{flag} requires a value"),
             Self::MissingForUser => write!(f, "--for-user <name> is required"),
-            Self::InvalidWatchedPath { raw, source } => {
-                write!(f, "invalid --watched-path '{raw}': {source}")
-            }
+            Self::MissingHomeFiles => write!(f, "--home-files <path> is required"),
             Self::UnexpectedArgument { raw } => write!(
                 f,
-                "unexpected argument '{raw}', expected --for-user or --watched-path"
+                "unexpected argument '{raw}', expected --for-user or --home-files"
             ),
         }
     }
@@ -52,7 +43,7 @@ impl std::error::Error for MountArgsError {}
 /// Parses `nyth mount --for-user <name> [--watched-path <rel>]...`
 pub fn parse_mount_args(args: &[String]) -> Result<MountArgs, MountArgsError> {
     let mut for_user = None;
-    let mut watched_paths = Vec::new();
+    let mut home_files = None;
     let mut remaining = args.iter();
 
     while let Some(arg) = remaining.next() {
@@ -63,17 +54,11 @@ pub fn parse_mount_args(args: &[String]) -> Result<MountArgs, MountArgsError> {
                     .ok_or(MountArgsError::MissingFlagValue { flag: "--for-user" })?;
                 for_user = Some(raw.clone());
             }
-            "--watched-path" => {
+            "--home-files" => {
                 let raw = remaining.next().ok_or(MountArgsError::MissingFlagValue {
-                    flag: "--watched-path",
+                    flag: "--home-files",
                 })?;
-                let path = RelativeHomePath::new(raw.as_str()).map_err(|source| {
-                    MountArgsError::InvalidWatchedPath {
-                        raw: raw.clone(),
-                        source,
-                    }
-                })?;
-                watched_paths.push(path);
+                home_files = Some(PathBuf::from(raw));
             }
             other => {
                 return Err(MountArgsError::UnexpectedArgument {
@@ -85,7 +70,7 @@ pub fn parse_mount_args(args: &[String]) -> Result<MountArgs, MountArgsError> {
 
     Ok(MountArgs {
         for_user: for_user.ok_or(MountArgsError::MissingForUser)?,
-        watched_paths,
+        home_files: home_files.ok_or(MountArgsError::MissingHomeFiles)?,
     })
 }
 
@@ -105,7 +90,8 @@ pub fn run_mount(args: &MountArgs) -> Result<(), NythError> {
 
     provision_persistent_tmpfs(&paths).map_err(NythError::Overlay)?;
     mount_home_snapshot(&identity.home, &paths).map_err(NythError::Overlay)?;
-    resolve_watched_paths(&paths, &args.watched_paths).map_err(NythError::Overlay)?;
+    materialize_home_files(&paths, &args.home_files, identity.uid, identity.gid)
+        .map_err(NythError::Overlay)?;
 
     // upper/work are created by root; the target user's own processes running inside the overlay need to be able to write to them
     set_ownership(&paths.upper, identity.uid, identity.gid).map_err(NythError::Overlay)?;
