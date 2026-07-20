@@ -3,8 +3,8 @@ mod support;
 use std::path::PathBuf;
 
 use nyth::cli::generated_diff::{
-    GeneratedChange, LineDiff, diff_generated_config, read_generated_change,
-    render_generated_change,
+    diff_generated_config, read_generated_change, render_generated_change, GeneratedChange,
+    LineDiff,
 };
 use support::Workspace;
 
