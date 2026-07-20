@@ -88,7 +88,7 @@ pub fn run_mount(args: &MountArgs) -> Result<(), NythError> {
 
     let paths = NythPaths::for_user(&args.for_user);
 
-    provision_persistent_tmpfs(&paths).map_err(NythError::Overlay)?;
+    provision_persistent_tmpfs(&paths, identity.uid, identity.gid).map_err(NythError::Overlay)?;
     mount_home_snapshot(&identity.home, &paths).map_err(NythError::Overlay)?;
     materialize_home_files(&paths, &args.home_files, identity.uid, identity.gid)
         .map_err(NythError::Overlay)?;

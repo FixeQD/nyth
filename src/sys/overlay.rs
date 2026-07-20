@@ -44,10 +44,15 @@ pub fn current_overlay_state(home: &Path) -> Result<OverlayState, OverlayError> 
     Ok(OverlayState::NotMounted)
 }
 
-/// Sets up `/run/nyth/<name>/` as a persistent, root-owned tmpfs with the 4 subdirectories (`lower/`, `home-snapshot/`, `upper/`, `work/`)
-pub fn provision_persistent_tmpfs(paths: &NythPaths) -> Result<(), OverlayError> {
+/// Sets up `/run/nyth/<name>/` as a persistent tmpfs, owned end-to-end by the target user, with the 4 subdirectories underneath it
+pub fn provision_persistent_tmpfs(
+    paths: &NythPaths,
+    uid: u32,
+    gid: u32,
+) -> Result<(), OverlayError> {
     create_root_dir(&paths.root)?;
     mount_tmpfs(&paths.root)?;
+    set_ownership(&paths.root, uid, gid)?;
 
     for dir in [
         &paths.lower,

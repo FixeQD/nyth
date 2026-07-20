@@ -12,6 +12,10 @@ use nyth::sys::overlay::{
 };
 use nyth::sys::paths::NythPaths;
 
+/// A uid/gid that's neither root nor whatever nyth itself provisioned things as
+const FAKE_TARGET_UID: u32 = 6553;
+const FAKE_TARGET_GID: u32 = 6553;
+
 /// EPERM/EACCES on the very first root-only step (creating/mounting `/run/nyth/<name>`) means this process isn't running as real root - expected outside a CI container running as root
 fn is_permission_denied(errno: i32) -> bool {
     errno == libc::EPERM || errno == libc::EACCES
@@ -33,7 +37,7 @@ fn run_in_child() -> i32 {
     let name = format!("nyth-test-overlay-{}", std::process::id());
     let paths = NythPaths::for_user(&name);
 
-    if let Err(e) = provision_persistent_tmpfs(&paths) {
+    if let Err(e) = provision_persistent_tmpfs(&paths, FAKE_TARGET_UID, FAKE_TARGET_GID) {
         if let OverlayError::PersistentTmpfsFailed { errno } = e {
             if is_permission_denied(errno) {
                 return 0;
@@ -41,6 +45,24 @@ fn run_in_child() -> i32 {
         }
         eprintln!("provision_persistent_tmpfs failed: {e:?}");
         return 1;
+    }
+
+    match fs::metadata(&paths.root) {
+        Ok(metadata) if metadata.uid() == FAKE_TARGET_UID && metadata.gid() == FAKE_TARGET_GID => {}
+        Ok(metadata) => {
+            eprintln!(
+                "paths.root not chowned to target user (uid={}, gid={})",
+                metadata.uid(),
+                metadata.gid()
+            );
+            let _ = unmount_persistent_tmpfs(&paths);
+            return 10;
+        }
+        Err(e) => {
+            eprintln!("stat on paths.root failed: {e}");
+            let _ = unmount_persistent_tmpfs(&paths);
+            return 11;
+        }
     }
 
     if let Err(e) = fs::write(paths.lower.join("testfile"), b"from-lower") {
@@ -105,10 +127,6 @@ fn check_overlay_contents(target: &Path, upper: &Path) -> i32 {
     }
 }
 
-/// A uid/gid that's neither root nor whatever nyth itself provisioned things as
-const FAKE_TARGET_UID: u32 = 6553;
-const FAKE_TARGET_GID: u32 = 6553;
-
 #[test]
 fn materialize_home_files_dereferences_symlinks_and_chowns_to_target_user() {
     support::run_in_fork(run_materialize_in_child);
@@ -118,7 +136,7 @@ fn run_materialize_in_child() -> i32 {
     let name = format!("nyth-test-materialize-{}", std::process::id());
     let paths = NythPaths::for_user(&name);
 
-    if let Err(e) = provision_persistent_tmpfs(&paths) {
+    if let Err(e) = provision_persistent_tmpfs(&paths, FAKE_TARGET_UID, FAKE_TARGET_GID) {
         if let OverlayError::PersistentTmpfsFailed { errno } = e {
             if is_permission_denied(errno) {
                 return 0;
