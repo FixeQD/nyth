@@ -72,6 +72,7 @@ let
         ${repoBackedArgs} ${generatedArgs} "$@"
     '';
   };
+  mountArgsFile = pkgs.writeText "nyth-mount-args" "--home-files ${config.home-files}";
 in
 {
   options.programs.nyth = {
@@ -96,7 +97,9 @@ in
 
   config = lib.mkIf cfg.enable {
     home.packages = [ nythStatusCmd nythCommitCmd ];
-    home.file.".local/state/nyth/mount-args".text =
-      "--home-files ${lib.escapeShellArg config.home-files}";
+    home.activation.nythMountArgs = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+      run mkdir -p "${config.home.homeDirectory}/.local/state/nyth"
+      run install -m644 "${mountArgsFile}" "${config.home.homeDirectory}/.local/state/nyth/mount-args"
+    '';
   };
 }
