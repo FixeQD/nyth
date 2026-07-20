@@ -10,7 +10,7 @@ pub mod unmount;
 use commit::commit;
 use generated_diff::{read_generated_change, render_generated_change};
 use mount::{parse_mount_args, run_mount};
-use status::{parse_repo_args, status, PendingChange, RepoArgs};
+use status::{PendingChange, RepoArgs, parse_repo_args, status};
 use unmount::{parse_unmount_args, run_unmount};
 
 /// Dispatches on `args[1]` (the subcommand). `args[0]` is the program name,

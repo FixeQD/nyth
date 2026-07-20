@@ -10,8 +10,8 @@ use nix::mount::MsFlags;
 use nix::unistd::{Gid, Uid};
 use rustix::fs::CWD;
 use rustix::mount::{
-    fsconfig_create, fsconfig_set_string, fsmount, fsopen, move_mount, FsMountFlags, FsOpenFlags,
-    MountAttrFlags, MoveMountFlags,
+    FsMountFlags, FsOpenFlags, MountAttrFlags, MoveMountFlags, fsconfig_create,
+    fsconfig_set_string, fsmount, fsopen, move_mount,
 };
 
 use crate::error::OverlayError;
@@ -36,7 +36,9 @@ pub fn current_overlay_state(home: &Path) -> Result<OverlayState, OverlayError> 
             message: e.to_string(),
         })?;
         // mountinfo(5): "... mount_id parent_id major:minor root mount_point ..."
-        if let Some(mount_point) = line.split_whitespace().nth(4) && Path::new(mount_point) == home {
+        if let Some(mount_point) = line.split_whitespace().nth(4)
+            && Path::new(mount_point) == home
+        {
             return Ok(OverlayState::Mounted);
         }
     }

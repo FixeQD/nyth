@@ -3,7 +3,7 @@ mod support;
 use std::ffi::CString;
 use std::fs;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{symlink, MetadataExt};
+use std::os::unix::fs::{MetadataExt, symlink};
 use std::path::Path;
 
 use nix::errno::Errno;
@@ -39,7 +39,9 @@ fn run_in_child() -> i32 {
     let paths = NythPaths::for_user(&name);
 
     if let Err(e) = provision_persistent_tmpfs(&paths, FAKE_TARGET_UID, FAKE_TARGET_GID) {
-        if let OverlayError::PersistentTmpfsFailed { errno } = e && is_permission_denied(errno) {
+        if let OverlayError::PersistentTmpfsFailed { errno } = e
+            && is_permission_denied(errno)
+        {
             return 0;
         }
         eprintln!("provision_persistent_tmpfs failed: {e:?}");
@@ -138,7 +140,9 @@ fn run_materialize_in_child() -> i32 {
     let paths = NythPaths::for_user(&name);
 
     if let Err(e) = provision_persistent_tmpfs(&paths, FAKE_TARGET_UID, FAKE_TARGET_GID) {
-        if let OverlayError::PersistentTmpfsFailed { errno } = e && is_permission_denied(errno) {
+        if let OverlayError::PersistentTmpfsFailed { errno } = e
+            && is_permission_denied(errno)
+        {
             return 0;
         }
         eprintln!("provision_persistent_tmpfs failed: {e:?}");
